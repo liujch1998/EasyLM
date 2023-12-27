@@ -1,0 +1,25 @@
+name: tulu-ppo
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.8.12
+  - pip:
+    - torch==1.13.1
+    - transformers==4.31.0
+    - accelerate==0.25.0
+    - tokenizers==0.13.2
+    - huggingface_hub==0.18.0
+    - datasets==2.15.0
+    - jax==0.4.13
+    - flax==0.7.2
+    - mlxu==0.1.12
+    - einops==0.7.0
+  - sentencepiece=0.1.96
+  - openai
+  - numpy=1.21
+  - matplotlib
+  - seaborn
+  - tqdm
+  - scikit-learn
+  - wandb

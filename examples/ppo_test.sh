@@ -1,4 +1,4 @@
-python -m EasyLM.models.llama.llama_train_dpo \
+python -m EasyLM.models.llama.llama_train_ppo \
     --mesh_dim='-1,1,1' \
     --dtype='bf16' \
     --num_epochs=1000 \
@@ -24,5 +24,4 @@ python -m EasyLM.models.llama.llama_train_dpo \
     --train_dataset.json_torch_dataset.num_workers=32 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=False \
-    --logger.output_dir=tmp \
-    --use_ipo=True
+    --logger.output_dir=tmp
