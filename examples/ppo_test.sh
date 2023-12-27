@@ -18,7 +18,7 @@ python -m EasyLM.models.llama.llama_train_ppo \
     --optimizer.accumulate_gradient_steps=8 \
     --train_dataset.type='preference_json_torch' \
     --train_dataset.text_processor.fields='[prompt],completion' \
-    --train_dataset.json_torch_dataset.path='debug_pref.json' \
+    --train_dataset.json_torch_dataset.path='debug_pref_3.json' \
     --train_dataset.json_torch_dataset.seq_length=128 \
     --train_dataset.json_torch_dataset.batch_size=2 \
     --train_dataset.json_torch_dataset.num_workers=32 \

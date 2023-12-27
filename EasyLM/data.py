@@ -623,8 +623,10 @@ class PreferenceDataset(JsonTorchDataset):
         chosen = sample['chosen']
         rejected = sample['rejected']
         # tokenize the prompt with chosen and rejected, truncate to seq_length
+        prompt_input_ids = self.tokenizer(prompt, max_length=self.config.seq_length, truncation=True).input_ids
         chosen_input_ids = self.tokenizer(prompt + chosen, max_length=self.config.seq_length, truncation=True).input_ids
         rejected_input_ids = self.tokenizer(prompt + rejected, max_length=self.config.seq_length, truncation=True).input_ids
+        prompt_attn_mask = [1] * len(prompt_input_ids)
         chosen_attn_mask = [1] * len(chosen_input_ids)
         rejected_attn_mask = [1] * len(rejected_input_ids)
         # setup loss mask for chosen and rejected
@@ -632,6 +634,8 @@ class PreferenceDataset(JsonTorchDataset):
         chosen_loss_mask = [0.0] * num_prompt_tokens + [1.0] * (len(chosen_input_ids) - num_prompt_tokens)
         rejected_loss_mask = [0.0] * num_prompt_tokens + [1.0] * (len(rejected_input_ids) - num_prompt_tokens)
         # pad everything out
+        prompt_input_ids = prompt_input_ids + [self.tokenizer.pad_token_id] * (self.config.seq_length - len(prompt_input_ids))
+        prompt_attn_mask = prompt_attn_mask + [0] * (self.config.seq_length - len(prompt_attn_mask))
         chosen_attn_mask = chosen_attn_mask + [0] * (self.config.seq_length - len(chosen_attn_mask))
         rejected_attn_mask = rejected_attn_mask + [0] * (self.config.seq_length - len(rejected_attn_mask))
         chosen_input_ids = chosen_input_ids + [self.tokenizer.pad_token_id] * (self.config.seq_length - len(chosen_input_ids))
@@ -639,6 +643,8 @@ class PreferenceDataset(JsonTorchDataset):
         chosen_loss_mask = chosen_loss_mask + [0.0] * (self.config.seq_length - len(chosen_loss_mask))
         rejected_loss_mask = rejected_loss_mask + [0.0] * (self.config.seq_length - len(rejected_loss_mask))
         return {
+            "prompt_input_ids": np.array(prompt_input_ids, dtype=np.int32),
+            "prompt_attn_mask": np.array(prompt_attn_mask, dtype=np.int32),
             "chosen_input_ids": np.array(chosen_input_ids, dtype=np.int32),
             "chosen_loss_mask": np.array(chosen_loss_mask, dtype=np.float32),
             "chosen_attn_mask": np.array(chosen_attn_mask, dtype=np.int32),
