@@ -28,6 +28,7 @@ from EasyLM.jax_utils import (
 from EasyLM.models.llama.llama_model import (
     LLaMAConfig, FlaxLLaMAForCausalLMModule, FlaxLLaMAForCausalLM
 )
+from transformers import GenerationConfig
 
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
@@ -112,20 +113,14 @@ def ppo_loss(
     advantages = whiten(advantages, continuation_mask, shift_mean=True)
     advantages = jax.lax.stop_gradient(advantages)
 
-    new_continuations_logits = policy_model.apply(
-        policy_params, input_ids, attention_mask,
-        deterministic=False, rngs=rng,
-    ).logits
+    new_continuations_logits = policy_model(input_ids, attention_mask, params=policy_params).logits
     new_continuations_logps = convert_logits_to_logps(new_continuations_logits, input_ids, continuation_mask) # (B, L)
     ratio = jnp.exp(new_continuations_logps - old_continuations_logps)
     ratio = jnp.clip(ratio, 1.0 - FLAGS.cliprange, 1.0 + FLAGS.cliprange)
     policy_losses = - advantages * ratio # (B, L)
     policy_loss = reduce_mean(policy_losses, continuation_mask)
 
-    new_continuations_value = value_model.apply(
-        value_params, input_ids, attention_mask,
-        deterministic=False, rngs=rng,
-    ).logits[:, :, 0]
+    new_continuations_value = value_model(input_ids, attention_mask, params=value_params).logits[:, :, 0]
 
     new_continuations_values = jnp.clip(new_continuations_value, old_continuations_values - FLAGS.cliprange_value, old_continuations_values + FLAGS.cliprange_value)
     value_losses = 0.5 * jnp.square(new_continuations_values - returns)
@@ -136,7 +131,7 @@ def ppo_loss(
 
 def ppo_step(
     policy_train_state, reference_train_state, value_train_state, reward_train_state,
-    policy_model, value_model,
+    policy_model, reference_model, value_model, reward_model,
     rng,
     batch,
 ):
@@ -145,41 +140,43 @@ def ppo_step(
     '''
 
     # rollout from current policy, output `input_ids` (B, L), `attention_mask` (B, L), `continuation_mask` (B, L)
-    input_ids, attention_mask, continuation_mask = batch['prompt_input_ids'], batch['prompt_attn_mask'], batch['prompt_attn_mask']
-    # TODO: implement generate()
-    # input_ids, attention_mask, continuation_mask = policy_model.generate(
-    #     policy_train_state.params, batch['prompt_input_ids'], batch['prompt_attn_mask'],
-    #     deterministic=False, rngs=rng,
-    # )
+    # input_ids, attention_mask, continuation_mask = batch['prompt_input_ids'], batch['prompt_attn_mask'], batch['prompt_attn_mask']
+    generation_config = GenerationConfig(
+        max_new_tokens=32,
+        do_sample=True,
+        temperature=1.0,
+    )
+    pad_token_id = 0
+    outputs = policy_model.generate(
+        input_ids=batch['prompt_input_ids'],
+        generation_config=generation_config,
+        params=policy_train_state.params,
+        pad_token_id=pad_token_id,
+    )
+    # print(outputs.sequences)
+    input_ids = outputs.sequences
+    attention_mask = jnp.where(input_ids == pad_token_id, 0, 1)
+    continuation_mask = jnp.concatenate([
+        jnp.zeros_like(batch['prompt_attn_mask']),
+        jnp.ones_like(attention_mask[:, batch['prompt_attn_mask'].shape[1]:]),
+    ], axis=1)
 
     # run forward pass on policy, output `continuations_logits` (B, L, V) and `continuations_logprobs` (B, L)
-    continuations_logits = policy_model.apply(
-        policy_train_state.params, input_ids, attention_mask,
-        deterministic=False, rngs=rng,
-    ).logits
+    continuations_logits = policy_model(input_ids, attention_mask, params=policy_train_state.params).logits
     continuations_logps = convert_logits_to_logps(continuations_logits, input_ids, continuation_mask) # (B, L)
     continuations_logps = jax.lax.stop_gradient(continuations_logps)
 
     # run forward pass on reference, output `continuations_ref_logits` (B, L, V) and `continuations_ref_logprobs` (B, L)
-    continuations_ref_logits = policy_model.apply(
-        reference_train_state.params, input_ids, attention_mask,
-        deterministic=False, rngs=rng,
-    ).logits
+    continuations_ref_logits = reference_model(input_ids, attention_mask, params=reference_train_state.params).logits
     continuations_ref_logps = convert_logits_to_logps(continuations_ref_logits, input_ids, continuation_mask) # (B, L)
     continuations_ref_logps = jax.lax.stop_gradient(continuations_ref_logps)
 
     # run forward pass on value, output `continuations_value` (B, L)
-    continuations_value = value_model.apply(
-        value_train_state.params, input_ids, attention_mask,
-        deterministic=False, rngs=rng,
-    ).logits[:, :, 0]
+    continuations_value = value_model(input_ids, attention_mask, params=value_train_state.params).logits[:, :, 0]
     continuations_value = jax.lax.stop_gradient(continuations_value)
 
     # run reward model, output `rewards_raw` (B), `rewards_normalized` (B), `rewards_kl` (B, L), `rewards_kl_penalty` (B, L), `rewards_penalized` (B, L)
-    rewards = value_model.apply(
-        reward_train_state.params, input_ids, attention_mask,
-        deterministic=False, rngs=rng,
-    ).logits[:, :, 0]
+    rewards = reward_model(input_ids, attention_mask, params=reward_train_state.params).logits[:, :, 0]
     last_token_index = attention_mask.sum(axis=-1) - 1 # (B)
     rewards_raw = jnp.take_along_axis(rewards, last_token_index[:, None], axis=1).squeeze(-1) # (B)
     rewards_normalized = rewards_raw * FLAGS.reward_gain + FLAGS.reward_bias # (B)
@@ -253,12 +250,15 @@ def main(argv):
     if llama_config.vocab_size < wrapped_dataset.vocab_size:
         llama_config.update(dict(vocab_size=wrapped_dataset.vocab_size))
 
-    policy_model = FlaxLLaMAForCausalLMModule(
+    _policy_model = FlaxLLaMAForCausalLMModule(
         llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype)
     )
-    value_model = FlaxLLaMAForCausalLMModule(
-        llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype)
-    )
+    # TODO: load from pretrained ckpt
+    # policy_model = FlaxLLaMAForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf', config=llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), from_pt=True, use_auth_token=True)
+    policy_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
+    value_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
+    reference_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
+    reward_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
 
     print("Building optimizer...")
     if FLAGS.num_epochs > 0:
@@ -276,38 +276,32 @@ def main(argv):
         get_weight_decay_mask(LLaMAConfig.get_weight_decay_exclusions())
     )
 
-    def create_trainstate_from_params(params):
-        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
-
+    print("Initializing training state and pjitting...")
     def init_fn(rng):
         rng_generator = JaxRNG(rng)
-        params = policy_model.init(
+        params = _policy_model.init(
             input_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
             position_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
             attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
             rngs=rng_generator(llama_config.rng_keys()),
-        )
+        )['params']
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
-    # def policy_init_fn(rng):
-    #     # policy_params = policy_model.params
-    #     rng_generator = JaxRNG(rng)
-    #     policy_params = policy_model.init(
-    #         input_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
-    #         position_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
-    #         attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
-    #         rngs=rng_generator(llama_config.rng_keys()),
-    #     )
-    #     return TrainState.create(params=policy_params, tx=optimizer, apply_fn=None)
-    # def value_init_fn(rng):
-    #     # value_params = value_model.params
-    #     rng_generator = JaxRNG(rng)
-    #     value_params = value_model.init(
-    #         input_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
-    #         position_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
-    #         attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
-    #         rngs=rng_generator(llama_config.rng_keys()),
-    #     )
-    #     return TrainState.create(params=value_params, tx=optimizer, apply_fn=None)
+    def create_trainstate_from_params(params):
+        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+    train_state_shapes = jax.eval_shape(init_fn, next_rng()) # .params = {'params': {'transformer', 'lm_head'}} => .params = {'transformer', 'lm_head'}
+    train_state_partition = match_partition_rules(LLaMAConfig.get_partition_rules(), train_state_shapes)
+    shard_fns, gather_fns = make_shard_and_gather_fns(train_state_partition, train_state_shapes)
+    sharded_init_fn = pjit(
+        init_fn,
+        in_shardings=PS(),
+        out_shardings=train_state_partition
+    )
+    sharded_create_trainstate_from_params = pjit(
+        create_trainstate_from_params,
+        in_shardings=(train_state_partition.params, ),
+        out_shardings=train_state_partition,
+        donate_argnums=(0, ),
+    )
 
     def train_step(
         policy_train_state, reference_train_state, value_train_state, reward_train_state,
@@ -318,7 +312,7 @@ def main(argv):
 
         policy_train_state, value_train_state, loss = ppo_step(
             policy_train_state, reference_train_state, value_train_state, reward_train_state,
-            policy_model, value_model,
+            policy_model, reference_model, value_model, reward_model, # TODO: do we need to shard them???
             rng_generator(llama_config.rng_keys()),
             batch,
         )
@@ -332,62 +326,6 @@ def main(argv):
         # })
         # we dont return the ref train state because we dont want to update it
         return policy_train_state, value_train_state, rng_generator()
-
-    print("Initializing training state and pjitting...")
-    train_state_shapes = jax.eval_shape(init_fn, next_rng())
-    train_state_partition = match_partition_rules(
-        LLaMAConfig.get_partition_rules(), train_state_shapes
-    )
-    shard_fns, gather_fns = make_shard_and_gather_fns(
-        train_state_partition, train_state_shapes
-    )
-    sharded_init_fn = pjit(
-        init_fn,
-        in_shardings=PS(),
-        out_shardings=train_state_partition
-    )
-    sharded_create_trainstate_from_params = pjit(
-        create_trainstate_from_params,
-        in_shardings=(train_state_partition.params, ),
-        out_shardings=train_state_partition,
-        donate_argnums=(0, ),
-    )
-    # policy_train_state_shapes = jax.eval_shape(policy_init_fn, next_rng())
-    # policy_train_state_partition = match_partition_rules(
-    #     LLaMAConfig.get_partition_rules(), policy_train_state_shapes
-    # )
-    # policy_shard_fns, policy_gather_fns = make_shard_and_gather_fns(
-    #     policy_train_state_partition, policy_train_state_shapes
-    # )
-    # policy_sharded_init_fn = pjit(
-    #     policy_init_fn,
-    #     in_shardings=PS(),
-    #     out_shardings=policy_train_state_partition
-    # )
-    # policy_sharded_create_trainstate_from_params = pjit(
-    #     create_trainstate_from_params,
-    #     in_shardings=(policy_train_state_partition.params, ),
-    #     out_shardings=policy_train_state_partition,
-    #     donate_argnums=(0, ),
-    # )
-    # value_train_state_shapes = jax.eval_shape(value_init_fn, next_rng())
-    # value_train_state_partition = match_partition_rules(
-    #     LLaMAConfig.get_partition_rules(), value_train_state_shapes
-    # )
-    # value_shard_fns, value_gather_fns = make_shard_and_gather_fns(
-    #     value_train_state_partition, value_train_state_shapes
-    # )
-    # value_sharded_init_fn = pjit(
-    #     value_init_fn,
-    #     in_shardings=PS(),
-    #     out_shardings=value_train_state_partition
-    # )
-    # value_sharded_create_trainstate_from_params = pjit(
-    #     create_trainstate_from_params,
-    #     in_shardings=(value_train_state_partition.params, ),
-    #     out_shardings=value_train_state_partition,
-    #     donate_argnums=(0, ),
-    # )
     sharded_train_step = pjit(
         train_step,
         in_shardings=(train_state_partition, train_state_partition, train_state_partition, train_state_partition, PS(), PS()),
@@ -417,66 +355,10 @@ def main(argv):
 
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
-        policy_train_state, reference_train_state, value_train_state, reward_train_state = None, None, None, None
-        policy_params, reference_params, value_params, reward_params = None, None, None, None
-        if FLAGS.load_checkpoint != '':
-            print("Loading checkpoint... (may take time to download)")
-            policy_train_state, policy_params = checkpointer.load_trainstate_checkpoint(
-                FLAGS.load_checkpoint, train_state_shapes, shard_fns
-            )
-            # TODO: load value model
-            print("Checkpoint loaded.")
-
-        if policy_train_state is None and policy_params is None:
-            # Initialize from scratch
-            policy_train_state = sharded_init_fn(next_rng())
-        elif policy_train_state is None and policy_params is not None:
-            # Restore from params but initialize train_state
-            policy_train_state = sharded_create_trainstate_from_params(policy_params)
-            del policy_params
-        if value_train_state is None and value_params is None:
-            # Initialize from scratch
-            value_train_state = sharded_init_fn(next_rng())
-        elif value_train_state is None and value_params is not None:
-            # Restore from params but initialize train_state
-            value_train_state = sharded_create_trainstate_from_params(value_params)
-            del value_params
-        
-        # Prepare reference model
-        # currently I just create a new train state for the reference params,
-        # but it would be nice if I could directly shard the params and use them...
-        if FLAGS.load_checkpoint != '':
-            print("Loading reference params... (may take time to download)")
-            _, reference_params = checkpointer.load_trainstate_checkpoint(
-                FLAGS.load_checkpoint, train_state_shapes, shard_fns
-            )
-            print("Reference params loaded.")
-        else:
-            print("Warning, your ppo reference params are not loaded from a checkpoint!")
-        if reference_train_state is None and reference_params is None:
-            # Initialize from scratch
-            reference_train_state = sharded_init_fn(next_rng())
-        elif reference_train_state is None and reference_params is not None:
-            # Restore from params but initialize train_state
-            reference_train_state = sharded_create_trainstate_from_params(reference_params)
-            del reference_params
-
-        # Prepare reward model
-        if FLAGS.load_checkpoint != '':
-            print("Loading reward params... (may take time to download)")
-            _, reward_params = checkpointer.load_trainstate_checkpoint(
-                FLAGS.load_checkpoint, train_state_shapes, shard_fns
-            )
-            print("Reward params loaded.")
-        else:
-            print("Warning, your reward params are not loaded from a checkpoint!")
-        if reward_train_state is None and reward_params is None:
-            # Initialize from scratch
-            reward_train_state = sharded_init_fn(next_rng())
-        elif reward_train_state is None and reward_params is not None:
-            # Restore from params but initialize train_state
-            reward_train_state = sharded_create_trainstate_from_params(reward_params)
-            del reward_params
+        policy_train_state = sharded_create_trainstate_from_params(policy_model.params)
+        value_train_state = sharded_create_trainstate_from_params(value_model.params)
+        reference_train_state = sharded_create_trainstate_from_params(reference_model.params)
+        reward_train_state = sharded_create_trainstate_from_params(reward_model.params)
 
         start_step = int(jax.device_get(policy_train_state.step))
 
