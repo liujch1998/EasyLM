@@ -5,6 +5,7 @@ WIP!!!
 import pprint
 import math
 import time
+import copy
 
 from tqdm import tqdm, trange
 import mlxu
@@ -14,6 +15,7 @@ import jax.numpy as jnp
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as PS
 from flax.training.train_state import TrainState
+import flax
 import torch
 
 from ...data import DatasetFactory
@@ -39,7 +41,8 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     total_steps=10000,
     load_llama_config='',
     update_llama_config='',
-    load_checkpoint='',
+    load_checkpoint_policy='',
+    load_checkpoint_reward='',
     load_dataset_state='',
     log_freq=50,
     save_model_freq=0,
@@ -57,8 +60,8 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     jax_distributed=JaxDistributedConfig.get_default_config(),
 
     ministeps=4,
-    kl_coef=0.15,
-    whiten_rewards=True,
+    kl_coef=0.2,
+    whiten_rewards=False,
     gamma=1.0,
     lam=0.95,
     cliprange=0.2,
@@ -67,6 +70,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     value_loss_coef=0.1,
     reward_gain=1.0,
     reward_bias=0.0,
+    max_new_tokens=32,
 )
 
 
@@ -113,14 +117,14 @@ def ppo_loss(
     advantages = whiten(advantages, continuation_mask, shift_mean=True)
     advantages = jax.lax.stop_gradient(advantages)
 
-    new_continuations_logits = policy_model(input_ids, attention_mask, params=policy_params).logits
+    new_continuations_logits = policy_model(input_ids, attention_mask, params=policy_params['params']).logits
     new_continuations_logps = convert_logits_to_logps(new_continuations_logits, input_ids, continuation_mask) # (B, L)
     ratio = jnp.exp(new_continuations_logps - old_continuations_logps)
     ratio = jnp.clip(ratio, 1.0 - FLAGS.cliprange, 1.0 + FLAGS.cliprange)
     policy_losses = - advantages * ratio # (B, L)
     policy_loss = reduce_mean(policy_losses, continuation_mask)
 
-    new_continuations_value = value_model(input_ids, attention_mask, params=value_params).logits[:, :, 0]
+    new_continuations_value = value_model(input_ids, attention_mask, params=value_params['params']).logits[:, :, 0]
 
     new_continuations_values = jnp.clip(new_continuations_value, old_continuations_values - FLAGS.cliprange_value, old_continuations_values + FLAGS.cliprange_value)
     value_losses = 0.5 * jnp.square(new_continuations_values - returns)
@@ -142,7 +146,7 @@ def ppo_step(
     # rollout from current policy, output `input_ids` (B, L), `attention_mask` (B, L), `continuation_mask` (B, L)
     # input_ids, attention_mask, continuation_mask = batch['prompt_input_ids'], batch['prompt_attn_mask'], batch['prompt_attn_mask']
     generation_config = GenerationConfig(
-        max_new_tokens=32,
+        max_new_tokens=FLAGS.max_new_tokens,
         do_sample=True,
         temperature=1.0,
     )
@@ -150,10 +154,10 @@ def ppo_step(
     outputs = policy_model.generate(
         input_ids=batch['prompt_input_ids'],
         generation_config=generation_config,
-        params=policy_train_state.params,
+        params=policy_train_state.params['params'],
         pad_token_id=pad_token_id,
     )
-    # print(outputs.sequences)
+    print(outputs.sequences)
     input_ids = outputs.sequences
     attention_mask = jnp.where(input_ids == pad_token_id, 0, 1)
     continuation_mask = jnp.concatenate([
@@ -162,21 +166,21 @@ def ppo_step(
     ], axis=1)
 
     # run forward pass on policy, output `continuations_logits` (B, L, V) and `continuations_logprobs` (B, L)
-    continuations_logits = policy_model(input_ids, attention_mask, params=policy_train_state.params).logits
+    continuations_logits = policy_model(input_ids, attention_mask, params=policy_train_state.params['params']).logits
     continuations_logps = convert_logits_to_logps(continuations_logits, input_ids, continuation_mask) # (B, L)
     continuations_logps = jax.lax.stop_gradient(continuations_logps)
 
     # run forward pass on reference, output `continuations_ref_logits` (B, L, V) and `continuations_ref_logprobs` (B, L)
-    continuations_ref_logits = reference_model(input_ids, attention_mask, params=reference_train_state.params).logits
+    continuations_ref_logits = reference_model(input_ids, attention_mask, params=reference_train_state.params['params']).logits
     continuations_ref_logps = convert_logits_to_logps(continuations_ref_logits, input_ids, continuation_mask) # (B, L)
     continuations_ref_logps = jax.lax.stop_gradient(continuations_ref_logps)
 
     # run forward pass on value, output `continuations_value` (B, L)
-    continuations_value = value_model(input_ids, attention_mask, params=value_train_state.params).logits[:, :, 0]
+    continuations_value = value_model(input_ids, attention_mask, params=value_train_state.params['params']).logits[:, :, 0]
     continuations_value = jax.lax.stop_gradient(continuations_value)
 
     # run reward model, output `rewards_raw` (B), `rewards_normalized` (B), `rewards_kl` (B, L), `rewards_kl_penalty` (B, L), `rewards_penalized` (B, L)
-    rewards = reward_model(input_ids, attention_mask, params=reward_train_state.params).logits[:, :, 0]
+    rewards = reward_model(input_ids, attention_mask, params=reward_train_state.params['params']).logits[:, :, 0]
     last_token_index = attention_mask.sum(axis=-1) - 1 # (B)
     rewards_raw = jnp.take_along_axis(rewards, last_token_index[:, None], axis=1).squeeze(-1) # (B)
     rewards_normalized = rewards_raw * FLAGS.reward_gain + FLAGS.reward_bias # (B)
@@ -225,12 +229,7 @@ def main(argv):
         wrapped_dataset = dataset
 
     real_batch_size = wrapped_dataset.config.batch_size
-    # for the scheduler, which only gets updated with 'real' grad steps
-    simulated_batch_size = real_batch_size * FLAGS.optimizer.accumulate_gradient_steps
     steps_per_epoch = len(wrapped_dataset) // real_batch_size
-    simulated_steps_per_epoch = len(wrapped_dataset) // simulated_batch_size
-    print(f"Make sure your scheduler steps are based on the simulated batch size: {simulated_batch_size}!")
-    print(f"Total simulated steps: {simulated_steps_per_epoch * FLAGS.num_epochs}")
 
     seq_length = wrapped_dataset.seq_length
 
@@ -250,41 +249,31 @@ def main(argv):
     if llama_config.vocab_size < wrapped_dataset.vocab_size:
         llama_config.update(dict(vocab_size=wrapped_dataset.vocab_size))
 
-    _policy_model = FlaxLLaMAForCausalLMModule(
-        llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype)
-    )
-    # TODO: load from pretrained ckpt
-    # policy_model = FlaxLLaMAForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf', config=llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), from_pt=True, use_auth_token=True)
-    policy_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
-    value_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
-    reference_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
-    reward_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
+    policy_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    value_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    reference_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    reward_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
 
     print("Building optimizer...")
     if FLAGS.num_epochs > 0:
-        total_simulated_steps = FLAGS.num_epochs * simulated_steps_per_epoch
-        FLAGS.optimizer.adamw_optimizer.lr_decay_steps = total_simulated_steps
+        total_steps = FLAGS.num_epochs * steps_per_epoch
         if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
-            FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_simulated_steps)
+            FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_steps)
 
-    print(f"Total simulated steps: {total_simulated_steps}")
-    print(f"Total simulated warmup steps: {FLAGS.optimizer.adamw_optimizer.lr_warmup_steps}")
-    print(f"Total simulated decay steps: {FLAGS.optimizer.adamw_optimizer.lr_decay_steps}")
+    print(f"Total steps: {total_steps}")
+    print(f"Total warmup steps: {FLAGS.optimizer.adamw_optimizer.lr_warmup_steps}")
 
-    optimizer, optimizer_info = OptimizerFactory.get_optimizer(
-        FLAGS.optimizer,
-        get_weight_decay_mask(LLaMAConfig.get_weight_decay_exclusions())
-    )
+    optimizer, optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
 
     print("Initializing training state and pjitting...")
     def init_fn(rng):
         rng_generator = JaxRNG(rng)
-        params = _policy_model.init(
+        params = policy_model.module.init(
             input_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
             position_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
             attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
             rngs=rng_generator(llama_config.rng_keys()),
-        )['params']
+        ) ####
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
     def create_trainstate_from_params(params):
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
@@ -312,7 +301,7 @@ def main(argv):
 
         policy_train_state, value_train_state, loss = ppo_step(
             policy_train_state, reference_train_state, value_train_state, reward_train_state,
-            policy_model, reference_model, value_model, reward_model, # TODO: do we need to shard them???
+            policy_model, reference_model, value_model, reward_model, # TODO: do we need to shard them??? No, as long as we use _do_init=False when creating these wrappers
             rng_generator(llama_config.rng_keys()),
             batch,
         )
@@ -355,10 +344,53 @@ def main(argv):
 
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
-        policy_train_state = sharded_create_trainstate_from_params(policy_model.params)
-        value_train_state = sharded_create_trainstate_from_params(value_model.params)
-        reference_train_state = sharded_create_trainstate_from_params(reference_model.params)
-        reward_train_state = sharded_create_trainstate_from_params(reward_model.params)
+        assert FLAGS.load_checkpoint_policy != ''
+        assert FLAGS.load_checkpoint_reward != ''
+
+        # Load policy
+        print("Loading checkpoint (policy) ... (may take time to download)")
+        policy_train_state, policy_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
+        print("Checkpoint (policy) loaded.")
+        assert policy_params is not None
+        policy_params = flax.core.frozen_dict.unfreeze(policy_params) ####
+        if policy_train_state is None:
+            policy_train_state = sharded_create_trainstate_from_params(policy_params)
+            del policy_params
+        reference_train_state = copy.deepcopy(policy_train_state)
+
+        # Load value
+        print("Loading checkpoint (value) ... (may take time to download)")
+        value_train_state, value_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
+        print("Checkpoint (value) loaded.")
+        assert value_params is not None
+        value_params = flax.core.frozen_dict.unfreeze(value_params)
+        if value_train_state is None:
+            value_train_state = sharded_create_trainstate_from_params(value_params)
+            del value_params
+        reward_train_state = copy.deepcopy(value_train_state)
+
+        # # Load reference
+        # print("Loading checkpoint (reference) ... (may take time to download)")
+        # reference_train_state, reference_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
+        # print("Checkpoint (reference) loaded.")
+        # assert reference_params is not None
+        # if reference_train_state is None:
+        #     reference_train_state = sharded_create_trainstate_from_params(reference_params)
+        #     del reference_params
+
+        # # Load reward
+        # print("Loading checkpoint (reward) ... (may take time to download)")
+        # reward_train_state, reward_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
+        # print("Checkpoint (reward) loaded.")
+        # assert reward_params is not None
+        # if reward_train_state is None:
+        #     reward_train_state = sharded_create_trainstate_from_params(reward_params)
+        #     del reward_params
+
+        # policy_train_state = sharded_create_trainstate_from_params(policy_model.params)
+        # value_train_state = sharded_create_trainstate_from_params(value_model.params)
+        # reference_train_state = sharded_create_trainstate_from_params(reference_model.params)
+        # reward_train_state = sharded_create_trainstate_from_params(reward_model.params)
 
         start_step = int(jax.device_get(policy_train_state.step))
 
