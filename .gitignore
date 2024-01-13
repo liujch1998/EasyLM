@@ -132,5 +132,3 @@ launcher/
 
 
 /tmp/
-/tokenizer.model
-*.json

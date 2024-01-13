@@ -19,7 +19,7 @@ python -m EasyLM.models.llama.llama_train_ppo \
     --optimizer.adamw_optimizer.warmup_ratio=0.0 \
     --train_dataset.type='preference_json_torch' \
     --train_dataset.text_processor.fields='[prompt],completion' \
-    --train_dataset.json_torch_dataset.path='debug_pref_3.json' \
+    --train_dataset.json_torch_dataset.path='data/debug_pref.json' \
     --train_dataset.json_torch_dataset.seq_length=64 \
     --train_dataset.json_torch_dataset.batch_size=2 \
     --train_dataset.json_torch_dataset.num_workers=32 \
