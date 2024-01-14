@@ -1,15 +1,15 @@
-python -m EasyLM.models.llama.llama_train_ppo \
+python3 -m EasyLM.models.llama.llama_train_ppo \
     --mesh_dim='-1,1,1' \
     --dtype='bf16' \
     --num_epochs=1000 \
     --log_freq=1 \
     --save_model_freq=-1 \
     --save_milestone_freq=-1 \
-    --load_llama_config='7b' \
+    --load_llama_config='debug' \
     --update_llama_config='' \
     --load_dataset_state='' \
-    --load_checkpoint_policy='params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
-    --load_checkpoint_reward='params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
+    --load_checkpoint_policy='' \ # 'params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
+    --load_checkpoint_reward='' \ # 'params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
     --tokenizer.vocab_file='gs://hamishi-dev/easylm/llama/tokenizer.model' \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \

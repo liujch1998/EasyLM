@@ -157,7 +157,6 @@ def ppo_step(
         params=policy_train_state.params['params'],
         pad_token_id=pad_token_id,
     )
-    print(outputs.sequences)
     input_ids = outputs.sequences
     attention_mask = jnp.where(input_ids == pad_token_id, 0, 1)
     continuation_mask = jnp.concatenate([
@@ -344,55 +343,64 @@ def main(argv):
 
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
-        assert FLAGS.load_checkpoint_policy != ''
-        assert FLAGS.load_checkpoint_reward != ''
+        start_step = 0
+        # start_step = int(jax.device_get(policy_train_state.step))
 
         # Load policy
-        print("Loading checkpoint (policy) ... (may take time to download)")
-        policy_train_state, policy_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
-        print("Checkpoint (policy) loaded.")
-        assert policy_params is not None
-        policy_params = flax.core.frozen_dict.unfreeze(policy_params) ####
+        policy_train_state, policy_params = None, None
+        if FLAGS.load_checkpoint_policy != '':
+            print("Loading checkpoint (policy) ... (may take time to download)")
+            policy_train_state, policy_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
+            print("Checkpoint (policy) loaded.")
         if policy_train_state is None:
-            policy_train_state = sharded_create_trainstate_from_params(policy_params)
-            del policy_params
-        reference_train_state = copy.deepcopy(policy_train_state)
+            if policy_params is None:
+                policy_train_state = sharded_init_fn(next_rng())
+            else:
+                policy_params = flax.core.frozen_dict.unfreeze(policy_params)
+                policy_train_state = sharded_create_trainstate_from_params(policy_params)
+                del policy_params
 
         # Load value
-        print("Loading checkpoint (value) ... (may take time to download)")
-        value_train_state, value_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
-        print("Checkpoint (value) loaded.")
-        assert value_params is not None
-        value_params = flax.core.frozen_dict.unfreeze(value_params)
+        value_train_state, value_params = None, None
+        if FLAGS.load_checkpoint_reward != '':
+            print("Loading checkpoint (value) ... (may take time to download)")
+            value_train_state, value_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
+            print("Checkpoint (value) loaded.")
         if value_train_state is None:
-            value_train_state = sharded_create_trainstate_from_params(value_params)
-            del value_params
-        reward_train_state = copy.deepcopy(value_train_state)
+            if value_params is None:
+                value_train_state = sharded_init_fn(next_rng())
+            else:
+                value_params = flax.core.frozen_dict.unfreeze(value_params)
+                value_train_state = sharded_create_trainstate_from_params(value_params)
+                del value_params
 
-        # # Load reference
-        # print("Loading checkpoint (reference) ... (may take time to download)")
-        # reference_train_state, reference_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
-        # print("Checkpoint (reference) loaded.")
-        # assert reference_params is not None
-        # if reference_train_state is None:
-        #     reference_train_state = sharded_create_trainstate_from_params(reference_params)
-        #     del reference_params
+        # Load reference
+        reference_train_state, reference_params = None, None
+        if FLAGS.load_checkpoint_policy != '':
+            print("Loading checkpoint (reference) ... (may take time to download)")
+            reference_train_state, reference_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
+            print("Checkpoint (reference) loaded.")
+        if reference_train_state is None:
+            if reference_params is None:
+                reference_train_state = sharded_init_fn(next_rng())
+            else:
+                reference_params = flax.core.frozen_dict.unfreeze(reference_params)
+                reference_train_state = sharded_create_trainstate_from_params(reference_params)
+                del reference_params
 
-        # # Load reward
-        # print("Loading checkpoint (reward) ... (may take time to download)")
-        # reward_train_state, reward_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
-        # print("Checkpoint (reward) loaded.")
-        # assert reward_params is not None
-        # if reward_train_state is None:
-        #     reward_train_state = sharded_create_trainstate_from_params(reward_params)
-        #     del reward_params
-
-        # policy_train_state = sharded_create_trainstate_from_params(policy_model.params)
-        # value_train_state = sharded_create_trainstate_from_params(value_model.params)
-        # reference_train_state = sharded_create_trainstate_from_params(reference_model.params)
-        # reward_train_state = sharded_create_trainstate_from_params(reward_model.params)
-
-        start_step = int(jax.device_get(policy_train_state.step))
+        # Load reward
+        reward_train_state, reward_params = None, None
+        if FLAGS.load_checkpoint_reward != '':
+            print("Loading checkpoint (reward) ... (may take time to download)")
+            reward_train_state, reward_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
+            print("Checkpoint (reward) loaded.")
+        if reward_train_state is None:
+            if reward_params is None:
+                reward_train_state = sharded_init_fn(next_rng())
+            else:
+                reward_params = flax.core.frozen_dict.unfreeze(reward_params)
+                reward_train_state = sharded_create_trainstate_from_params(reward_params)
+                del reward_params
 
         sharded_rng = next_rng()
 
