@@ -4,12 +4,12 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --load_checkpoint_policy='' \ # 'params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
     --load_checkpoint_reward='' \ # 'params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
     --tokenizer.vocab_file='gs://hamishi-dev/easylm/llama/tokenizer.model' \
-    --train_dataset.type='prompt_json_torch' \
-    --train_dataset.text_processor.fields='[prompt],completion' \
-    --train_dataset.json_torch_dataset.path='data/debug_pref.json' \
-    --train_dataset.json_torch_dataset.seq_length=64 \
-    --train_dataset.json_torch_dataset.batch_size=2 \
-    --train_dataset.json_torch_dataset.num_workers=32 \
+    --tokenizer.add_bos_token=True \
+    --train_dataset.type='hf_prompt' \
+    --train_dataset.text_processor.fields='[instruction]' \
+    --train_dataset.hf_prompt_dataset.seq_length=64 \
+    --train_dataset.hf_prompt_dataset.batch_size=2 \
+    --train_dataset.hf_prompt_dataset.num_workers=32 \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.init_lr=1e-5 \
@@ -17,7 +17,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --optimizer.adamw_optimizer.end_lr=1e-5 \
     --optimizer.adamw_optimizer.warmup_ratio=0.0 \
     --checkpointer.save_optimizer_state=False \
-    --logger.online=True \
+    --logger.online=False \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
     --logger.prefix='debug' \

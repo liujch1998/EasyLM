@@ -156,6 +156,7 @@ def ppo_step(
     batch,
 ):
     prompt_input_ids, prompt_attn_mask = batch['prompt_input_ids'], batch['prompt_attn_mask']
+    reward_prompt_input_ids, reward_prompt_attn_mask = batch['reward_prompt_input_ids'], batch['reward_prompt_attn_mask']
     PL = prompt_input_ids.shape[1]
 
     timing = dict()
@@ -186,8 +187,11 @@ def ppo_step(
 
     # run reward model
     t = time.time()
-    reward_output = reward_model(input_ids, attn_mask, params=reward_train_state.params['params']).logits[:, :, 0] # (B, L)
-    last_token_index = jnp.argmax(position_ids, axis=1) # (B)
+    reward_input_ids = jnp.concatenate([reward_prompt_input_ids, cont_input_ids], axis=1) # (B, PL+CL)
+    reward_attn_mask = jnp.concatenate([reward_prompt_attn_mask, cont_attn_mask], axis=1) # (B, PL+CL)
+    reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
+    reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params']).logits[:, :, 0] # (B, L)
+    last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
     scores = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
     scores = jax.lax.stop_gradient(scores)
     timing['time/ppo/reward_forward_pass'] = time.time() - t
