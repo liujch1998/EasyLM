@@ -20,6 +20,8 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.name='debug' \
+    --logger.prefix='debug' \
+    --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
+    --use_tpu=False \
     --mini_batch_size=2

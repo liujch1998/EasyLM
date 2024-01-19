@@ -51,6 +51,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     logger=mlxu.WandBLogger.get_default_config(),
     log_all_worker=False,
 
+    use_tpu=False,
     num_epochs=2,
     max_continuation_len=16,
     ppo_epochs=4,
@@ -412,7 +413,8 @@ def main(argv):
             if policy_params is None:
                 policy_train_state = sharded_init_fn(next_rng())
             else:
-                # policy_params = flax.core.frozen_dict.unfreeze(policy_params)
+                if not FLAGS.use_tpu:
+                    policy_params = flax.core.frozen_dict.unfreeze(policy_params)
                 policy_train_state = sharded_create_trainstate_from_params(policy_params)
                 del policy_params
 
@@ -426,7 +428,8 @@ def main(argv):
             if value_params is None:
                 value_train_state = sharded_init_fn(next_rng())
             else:
-                # value_params = flax.core.frozen_dict.unfreeze(value_params)
+                if not FLAGS.use_tpu:
+                    value_params = flax.core.frozen_dict.unfreeze(value_params)
                 value_train_state = sharded_create_trainstate_from_params(value_params)
                 del value_params
 
@@ -440,7 +443,8 @@ def main(argv):
             if reference_params is None:
                 reference_train_state = sharded_init_fn(next_rng())
             else:
-                # reference_params = flax.core.frozen_dict.unfreeze(reference_params)
+                if not FLAGS.use_tpu:
+                    reference_params = flax.core.frozen_dict.unfreeze(reference_params)
                 reference_train_state = sharded_create_trainstate_from_params(reference_params)
                 del reference_params
 
@@ -454,7 +458,8 @@ def main(argv):
             if reward_params is None:
                 reward_train_state = sharded_init_fn(next_rng())
             else:
-                # reward_params = flax.core.frozen_dict.unfreeze(reward_params)
+                if not FLAGS.use_tpu:
+                    reward_params = flax.core.frozen_dict.unfreeze(reward_params)
                 reward_train_state = sharded_create_trainstate_from_params(reward_params)
                 del reward_params
 
