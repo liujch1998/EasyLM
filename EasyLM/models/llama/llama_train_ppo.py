@@ -34,8 +34,10 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     jax_distributed=JaxDistributedConfig.get_default_config(),
     mesh_dim='1,-1,1',
     dtype='bf16',
-    load_llama_config='',
-    update_llama_config='',
+    load_llama_config_policy='',
+    load_llama_config_reward='',
+    update_llama_config_policy='',
+    update_llama_config_reward='',
     load_checkpoint_policy='',
     load_checkpoint_reward='',
     load_dataset_state='',
@@ -312,23 +314,36 @@ def main(argv):
     print(f'total_steps={total_steps}')
 
     print("Building model...")
-    if FLAGS.load_llama_config != '':
-        llama_config = LLaMAConfig.load_config(FLAGS.load_llama_config)
+    if FLAGS.load_llama_config_policy != '':
+        llama_config_policy = LLaMAConfig.load_config(FLAGS.load_llama_config_policy)
     else:
-        llama_config = LLaMAConfig(**FLAGS.llama)
-    if FLAGS.update_llama_config != '':
-        llama_config.update(dict(eval(FLAGS.update_llama_config)))
-    llama_config.update(dict(
+        llama_config_policy = LLaMAConfig(**FLAGS.llama)
+    if FLAGS.update_llama_config_policy != '':
+        llama_config_policy.update(dict(eval(FLAGS.update_llama_config_policy)))
+    llama_config_policy.update(dict(
         bos_token_id=wrapped_dataset.tokenizer.bos_token_id,
         eos_token_id=wrapped_dataset.tokenizer.eos_token_id,
     ))
-    if llama_config.vocab_size < wrapped_dataset.vocab_size:
-        llama_config.update(dict(vocab_size=wrapped_dataset.vocab_size))
+    if llama_config_policy.vocab_size < wrapped_dataset.vocab_size:
+        llama_config_policy.update(dict(vocab_size=wrapped_dataset.vocab_size))
 
-    policy_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
-    value_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
-    reference_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
-    reward_model = FlaxLLaMAForCausalLM(llama_config, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    if FLAGS.load_llama_config_reward != '':
+        llama_config_reward = LLaMAConfig.load_config(FLAGS.load_llama_config_reward)
+    else:
+        llama_config_reward = LLaMAConfig(**FLAGS.llama)
+    if FLAGS.update_llama_config_reward != '':
+        llama_config_reward.update(dict(eval(FLAGS.update_llama_config_reward)))
+    llama_config_reward.update(dict(
+        bos_token_id=wrapped_dataset.tokenizer.bos_token_id,
+        eos_token_id=wrapped_dataset.tokenizer.eos_token_id,
+    ))
+    if llama_config_reward.vocab_size < wrapped_dataset.vocab_size:
+        llama_config_reward.update(dict(vocab_size=wrapped_dataset.vocab_size))
+
+    policy_model = FlaxLLaMAForCausalLM(llama_config_policy, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    value_model = FlaxLLaMAForCausalLM(llama_config_reward, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    reference_model = FlaxLLaMAForCausalLM(llama_config_policy, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
+    reward_model = FlaxLLaMAForCausalLM(llama_config_reward, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
 
     print("Building optimizer...")
     if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
@@ -336,29 +351,55 @@ def main(argv):
     optimizer, optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
 
     print("Initializing training state and pjitting...")
-    def init_fn(rng):
+    def init_fn_policy(rng):
         rng_generator = JaxRNG(rng)
         params = policy_model.module.init(
             input_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
             position_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
             attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
-            rngs=rng_generator(llama_config.rng_keys()),
+            rngs=rng_generator(llama_config_policy.rng_keys()),
         )
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
-    def create_trainstate_from_params(params):
+    def create_trainstate_from_params_policy(params):
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
-    train_state_shapes = jax.eval_shape(init_fn, next_rng()) # .params = {'params': {'transformer', 'lm_head'}} => .params = {'transformer', 'lm_head'}
-    train_state_partition = match_partition_rules(LLaMAConfig.get_partition_rules(), train_state_shapes)
-    shard_fns, gather_fns = make_shard_and_gather_fns(train_state_partition, train_state_shapes)
-    sharded_init_fn = pjit(
-        init_fn,
+    train_state_shapes_policy = jax.eval_shape(init_fn_policy, next_rng()) # .params = {'params': {'transformer', 'lm_head'}} => .params = {'transformer', 'lm_head'}
+    train_state_partition_policy = match_partition_rules(LLaMAConfig.get_partition_rules(), train_state_shapes_policy)
+    shard_fns_policy, gather_fns_policy = make_shard_and_gather_fns(train_state_partition_policy, train_state_shapes_policy)
+    sharded_init_fn_policy = pjit(
+        init_fn_policy,
         in_shardings=PS(),
-        out_shardings=train_state_partition
+        out_shardings=train_state_partition_policy,
     )
-    sharded_create_trainstate_from_params = pjit(
-        create_trainstate_from_params,
-        in_shardings=(train_state_partition.params, ),
-        out_shardings=train_state_partition,
+    sharded_create_trainstate_from_params_policy = pjit(
+        create_trainstate_from_params_policy,
+        in_shardings=(train_state_partition_policy.params, ),
+        out_shardings=train_state_partition_policy,
+        donate_argnums=(0, ),
+    )
+
+    def init_fn_reward(rng):
+        rng_generator = JaxRNG(rng)
+        params = reward_model.module.init(
+            input_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
+            position_ids=jnp.zeros((4, seq_length), dtype=jnp.int32),
+            attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
+            rngs=rng_generator(llama_config_reward.rng_keys()),
+        )
+        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+    def create_trainstate_from_params_reward(params):
+        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+    train_state_shapes_reward = jax.eval_shape(init_fn_reward, next_rng()) # .params = {'params': {'transformer', 'lm_head'}} => .params = {'transformer', 'lm_head'}
+    train_state_partition_reward = match_partition_rules(LLaMAConfig.get_partition_rules(), train_state_shapes_reward)
+    shard_fns_reward, gather_fns_reward = make_shard_and_gather_fns(train_state_partition_reward, train_state_shapes_reward)
+    sharded_init_fn_reward = pjit(
+        init_fn_reward,
+        in_shardings=PS(),
+        out_shardings=train_state_partition_reward,
+    )
+    sharded_create_trainstate_from_params_reward = pjit(
+        create_trainstate_from_params_reward,
+        in_shardings=(train_state_partition_reward.params, ),
+        out_shardings=train_state_partition_reward,
         donate_argnums=(0, ),
     )
 
@@ -377,8 +418,8 @@ def main(argv):
         return policy_train_state, value_train_state, rng_generator(), stats, examples
     sharded_train_step = pjit(
         train_step,
-        in_shardings=(train_state_partition, train_state_partition, train_state_partition, train_state_partition, PS(), PS()),
-        out_shardings=(train_state_partition, train_state_partition, PS(), PS(), PS()),
+        in_shardings=(train_state_partition_policy, train_state_partition_policy, train_state_partition_reward, train_state_partition_reward, PS(), PS()),
+        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS()),
         donate_argnums=(0, 2, 4),  # policy train state, value train state, and rng
     )
 
@@ -392,11 +433,11 @@ def main(argv):
             step=step,
             variant=variant,
             flags=flags_config_dict,
-            llama_config=llama_config.to_dict(),
+            llama_config=llama_config_policy.to_dict(),
         )
         checkpointer.save_all(
             train_state=policy_train_state,
-            gather_fns=gather_fns,
+            gather_fns=gather_fns_policy,
             metadata=metadata,
             milestone=milestone,
         )
@@ -411,60 +452,60 @@ def main(argv):
         policy_train_state, policy_params = None, None
         if FLAGS.load_checkpoint_policy != '':
             print("Loading checkpoint (policy) ... (may take time to download)")
-            policy_train_state, policy_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
+            policy_train_state, policy_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes_policy, shard_fns_policy)
             print("Checkpoint (policy) loaded.")
         if policy_train_state is None:
             if policy_params is None:
-                policy_train_state = sharded_init_fn(next_rng())
+                policy_train_state = sharded_init_fn_policy(next_rng())
             else:
                 if not FLAGS.use_tpu:
                     policy_params = flax.core.frozen_dict.unfreeze(policy_params)
-                policy_train_state = sharded_create_trainstate_from_params(policy_params)
+                policy_train_state = sharded_create_trainstate_from_params_policy(policy_params)
                 del policy_params
 
         # Load value
         value_train_state, value_params = None, None
         if FLAGS.load_checkpoint_reward != '':
             print("Loading checkpoint (value) ... (may take time to download)")
-            value_train_state, value_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
+            value_train_state, value_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes_reward, shard_fns_reward)
             print("Checkpoint (value) loaded.")
         if value_train_state is None:
             if value_params is None:
-                value_train_state = sharded_init_fn(next_rng())
+                value_train_state = sharded_init_fn_reward(next_rng())
             else:
                 if not FLAGS.use_tpu:
                     value_params = flax.core.frozen_dict.unfreeze(value_params)
-                value_train_state = sharded_create_trainstate_from_params(value_params)
+                value_train_state = sharded_create_trainstate_from_params_reward(value_params)
                 del value_params
 
         # Load reference
         reference_train_state, reference_params = None, None
         if FLAGS.load_checkpoint_policy != '':
             print("Loading checkpoint (reference) ... (may take time to download)")
-            reference_train_state, reference_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes, shard_fns)
+            reference_train_state, reference_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_policy, train_state_shapes_policy, shard_fns_policy)
             print("Checkpoint (reference) loaded.")
         if reference_train_state is None:
             if reference_params is None:
-                reference_train_state = sharded_init_fn(next_rng())
+                reference_train_state = sharded_init_fn_policy(next_rng())
             else:
                 if not FLAGS.use_tpu:
                     reference_params = flax.core.frozen_dict.unfreeze(reference_params)
-                reference_train_state = sharded_create_trainstate_from_params(reference_params)
+                reference_train_state = sharded_create_trainstate_from_params_policy(reference_params)
                 del reference_params
 
         # Load reward
         reward_train_state, reward_params = None, None
         if FLAGS.load_checkpoint_reward != '':
             print("Loading checkpoint (reward) ... (may take time to download)")
-            reward_train_state, reward_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes, shard_fns)
+            reward_train_state, reward_params = checkpointer.load_trainstate_checkpoint(FLAGS.load_checkpoint_reward, train_state_shapes_reward, shard_fns_reward)
             print("Checkpoint (reward) loaded.")
         if reward_train_state is None:
             if reward_params is None:
-                reward_train_state = sharded_init_fn(next_rng())
+                reward_train_state = sharded_init_fn_reward(next_rng())
             else:
                 if not FLAGS.use_tpu:
                     reward_params = flax.core.frozen_dict.unfreeze(reward_params)
-                reward_train_state = sharded_create_trainstate_from_params(reward_params)
+                reward_train_state = sharded_create_trainstate_from_params_reward(reward_params)
                 del reward_params
 
         sharded_rng = next_rng()
