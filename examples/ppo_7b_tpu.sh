@@ -1,5 +1,5 @@
 gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --project=ai2-tpu --worker=all --command="cd n-tulu-ppo-jax; git pull; export WANDB_API_KEY='a46519994b4614615d5ce4aa8742ef19685a7cae'; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
-    --mesh_dim='4,8,8' \
+    --mesh_dim='4,64,1' \
     --load_llama_config_policy='7b' \
     --load_llama_config_reward='13b' \
     --load_checkpoint_policy='params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
@@ -9,7 +9,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --train_dataset.type='hf_prompt' \
     --train_dataset.text_processor.fields='[instruction]' \
     --train_dataset.hf_prompt_dataset.seq_length=1024 \
-    --train_dataset.hf_prompt_dataset.batch_size=1 \
+    --train_dataset.hf_prompt_dataset.batch_size=256 \
     --train_dataset.hf_prompt_dataset.num_workers=32 \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
@@ -25,6 +25,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
     --use_tpu=True \
-    --mini_batch_size=1 \
+    --mini_batch_size=256 \
     --max_continuation_len=256 \
+    --save_model_freq=50 \
     &> ~/all.log &"
