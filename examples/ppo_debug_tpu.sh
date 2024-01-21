@@ -1,9 +1,9 @@
-python3 -m EasyLM.models.llama.llama_train_ppo \
-    --mesh_dim='-1,1,1' \
-    --load_llama_config_policy='7b' \
-    --load_llama_config_reward='13b' \
-    --load_checkpoint_policy='params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
-    --load_checkpoint_reward='params::/net/nfs.cirrascale/allennlp/jiachengl/n-tulu-ppo-jax/ckpt/UltraRM-13b/streaming_params' \ # 'params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
+gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-east1-d --project=ai2-tpu --worker=all --command="cd n-tulu-ppo-jax; git pull; export WANDB_API_KEY='a46519994b4614615d5ce4aa8742ef19685a7cae'; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
+    --mesh_dim='8,1,1' \
+    --load_llama_config_policy='debug' \
+    --load_llama_config_reward='debug' \
+    --load_checkpoint_policy='' \
+    --load_checkpoint_reward='' \
     --tokenizer.vocab_file='gs://hamishi-dev/easylm/llama/tokenizer.model' \
     --tokenizer.add_bos_token=True \
     --train_dataset.type='hf_prompt' \
@@ -21,9 +21,10 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --logger.online=False \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='debug' \
+    --logger.prefix='debug_tpu' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
-    --use_tpu=False \
+    --use_tpu=True \
     --mini_batch_size=2 \
     --max_continuation_len=16
+    &> ~/all.log &"

@@ -525,6 +525,7 @@ def main(argv):
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
                     logger.log(stats)
                     tqdm.write("\n" + pprint.pformat(stats) + "\n")
+                    tqdm.write(pprint.pformat(examples) + "\n"); exit()
 
                 if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
                     save_checkpoint(policy_train_state, value_train_state, milestone=True)
