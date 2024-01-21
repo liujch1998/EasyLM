@@ -55,6 +55,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
 
     use_tpu=False,
     num_epochs=4,
+    max_steps_per_epoch=0,
     max_continuation_len=16,
     ppo_epochs=4,
     mini_batch_size=1,
@@ -306,6 +307,7 @@ def main(argv):
 
     real_batch_size = wrapped_dataset.config.batch_size
     steps_per_epoch = len(wrapped_dataset) // real_batch_size
+    steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
     seq_length = wrapped_dataset.seq_length
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
@@ -445,7 +447,6 @@ def main(argv):
 
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
-        start_step = 0
         # start_step = int(jax.device_get(policy_train_state.step)) # TODO: fix this
 
         # Load policy
@@ -511,7 +512,9 @@ def main(argv):
         sharded_rng = next_rng()
 
         for epoch in trange(0, FLAGS.num_epochs, ncols=0, position=0):
-            for step, batch in zip(trange(start_step, steps_per_epoch, ncols=0, position=1), dataset):
+            for step, batch in zip(trange(0, steps_per_epoch, ncols=0, position=1), dataset):
+                global_step = epoch * steps_per_epoch + step
+
                 policy_train_state, value_train_state, sharded_rng, stats, examples = sharded_train_step(
                     policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, batch
                 )
@@ -523,7 +526,7 @@ def main(argv):
                     rewards = examples['scores']
                     examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
-                    logger.log(stats)
+                    logger.log(stats, step=global_step, commit=True)
                     tqdm.write("\n" + pprint.pformat(stats) + "\n")
 
                 if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
