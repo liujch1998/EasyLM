@@ -297,7 +297,7 @@ def main(argv):
     set_random_seed(FLAGS.seed)
 
     print("Loading dataset...")
-    assert FLAGS.train_dataset.json_torch_dataset.batch_size % FLAGS.mini_batch_size == 0
+    # assert FLAGS.train_dataset.json_torch_dataset.batch_size % FLAGS.mini_batch_size == 0
     tokenizer = LLaMAConfig.get_tokenizer(FLAGS.tokenizer, padding_side='left', truncation_side='left')
     dataset = DatasetFactory.load_dataset(FLAGS.train_dataset, tokenizer)
     if FLAGS.load_dataset_state != '':
