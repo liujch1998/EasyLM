@@ -29,4 +29,6 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --mini_batch_size=32 \
     --max_continuation_len=256 \
     --save_model_freq=50 \
+    --num_epochs=1 \
+    --max_steps_per_epoch=1 \
     &> ~/all.log &"

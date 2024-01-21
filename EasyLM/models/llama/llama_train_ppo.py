@@ -420,8 +420,8 @@ def main(argv):
         return policy_train_state, value_train_state, rng_generator(), stats, examples
     sharded_train_step = pjit(
         train_step,
-        in_shardings=(train_state_partition_policy, train_state_partition_policy, train_state_partition_reward, train_state_partition_reward, PS(), PS()),
-        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS()),
+        in_shardings=(train_state_partition_policy, train_state_partition_policy, train_state_partition_reward, train_state_partition_reward, PS(), PS(('dp', 'fsdp'))),
+        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS(('dp', 'fsdp'))),
         donate_argnums=(0, 2, 4),  # policy train state, value train state, and rng
     )
 
@@ -513,8 +513,6 @@ def main(argv):
 
         for epoch in trange(0, FLAGS.num_epochs, ncols=0, position=0):
             for step, batch in zip(trange(0, steps_per_epoch, ncols=0, position=1), dataset):
-                global_step = epoch * steps_per_epoch + step
-
                 policy_train_state, value_train_state, sharded_rng, stats, examples = sharded_train_step(
                     policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, batch
                 )
@@ -526,7 +524,7 @@ def main(argv):
                     rewards = examples['scores']
                     examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
-                    logger.log(stats, step=global_step, commit=True)
+                    logger.log(stats)
                     tqdm.write("\n" + pprint.pformat(stats) + "\n")
 
                 if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
