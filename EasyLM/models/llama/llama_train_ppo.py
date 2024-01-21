@@ -427,7 +427,7 @@ def main(argv):
         FLAGS.checkpointer, logger.output_dir,
         enable=jax.process_index() == 0,
     )
-    def save_checkpoint(policy_train_state, milestone=False):
+    def save_checkpoint(policy_train_state, value_train_state, milestone=False):
         step = int(jax.device_get(policy_train_state.step))
         metadata = dict(
             step=step,

@@ -24,6 +24,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-central1-f --proje
     --logger.prefix='debug_tpu' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
+    --logger.output_dir='/home/jiachengl/runs/' \
     --use_tpu=True \
     --mini_batch_size=8 \
     --max_continuation_len=16 \

@@ -24,6 +24,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --logger.prefix='train_v1_t4-8-8_b32x1_mb32x1' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
+    --logger.output_dir='/home/jiachengl/runs/' \
     --use_tpu=True \
     --mini_batch_size=256 \
     --max_continuation_len=256 \
