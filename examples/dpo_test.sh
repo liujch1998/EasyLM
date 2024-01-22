@@ -5,11 +5,11 @@ python -m EasyLM.models.llama.llama_train_dpo \
     --log_freq=1 \
     --save_model_freq=-1 \
     --save_milestone_freq=-1 \
-    --load_llama_config='7b' \
+    --load_llama_config='debug' \
     --update_llama_config='' \
     --load_dataset_state='' \
-    --load_checkpoint='params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
-    --tokenizer.vocab_file='tokenizer.model' \ # 'gs://hamishi-dev/easylm/llama/tokenizer.model' \
+    --load_checkpoint='' \ # 'params::gs://hamishi-dev/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
+    --tokenizer.vocab_file='gs://hamishi-dev/easylm/llama/tokenizer.model' \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.lr=1e-3 \

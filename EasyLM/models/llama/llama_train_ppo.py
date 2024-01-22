@@ -420,8 +420,8 @@ def main(argv):
         return policy_train_state, value_train_state, rng_generator(), stats, examples
     sharded_train_step = pjit(
         train_step,
-        in_shardings=(train_state_partition_policy, train_state_partition_policy, train_state_partition_reward, train_state_partition_reward, PS(), PS(('dp', 'fsdp'))),
-        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS(('dp', 'fsdp'))),
+        in_shardings=(train_state_partition_policy, train_state_partition_policy, train_state_partition_reward, train_state_partition_reward, PS(), PS()),
+        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS()),
         donate_argnums=(0, 2, 4),  # policy train state, value train state, and rng
     )
 
