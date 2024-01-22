@@ -529,7 +529,7 @@ def main(argv):
                     # rewards = examples['scores']
                     # examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     # stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
-                    examples = [[q, r] for q, r, reward in zip(queries, responses)]
+                    examples = [[q, r] for q, r in zip(queries, responses)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=examples)
                     logger.log(stats)
                     tqdm.write("\n" + pprint.pformat(stats) + "\n")
