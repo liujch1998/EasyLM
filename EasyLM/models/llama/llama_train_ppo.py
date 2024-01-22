@@ -173,7 +173,6 @@ def ppo_step(
         temperature=FLAGS.temperature,
         pad_token_id=pad_token_id,
         max_new_tokens=FLAGS.max_continuation_len,
-        use_cache=False,
     )
     outputs = policy_model.generate(
         input_ids=prompt_input_ids,
