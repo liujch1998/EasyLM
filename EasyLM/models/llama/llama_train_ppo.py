@@ -526,9 +526,11 @@ def main(argv):
                     stats = {k: float(v) for k, v in stats.items()}
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=True)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=True)
-                    rewards = examples['scores']
-                    examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
-                    stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
+                    # rewards = examples['scores']
+                    # examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
+                    # stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
+                    examples = [[q, r] for q, r, reward in zip(queries, responses)]
+                    stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=examples)
                     logger.log(stats)
                     tqdm.write("\n" + pprint.pformat(stats) + "\n")
 
