@@ -180,12 +180,16 @@ def ppo_step(
     # rollout from current policy
     t = time.time()
     pad_token_id = 0
+    bos_token_id = 1
+    eos_token_id = 2
     generation_config = GenerationConfig(
         do_sample=True,
         temperature=FLAGS.temperature,
         pad_token_id=pad_token_id,
-        # eos_token_id=FLAGS.llama.eos_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
         max_new_tokens=FLAGS.max_continuation_len,
+        forced_eos_token_id=eos_token_id,
     )
     outputs = policy_model.generate(
         input_ids=prompt_input_ids,
@@ -540,8 +544,8 @@ def main(argv):
 
                 if FLAGS.log_freq > 0 and step % FLAGS.log_freq == 0:
                     stats = {k: float(v) for k, v in stats.items()}
-                    queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=True)
-                    responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=True)
+                    queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False)
+                    responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False)
                     rewards = examples['scores']
                     examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
