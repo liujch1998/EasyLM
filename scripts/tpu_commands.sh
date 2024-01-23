@@ -51,8 +51,8 @@ function _tpu_cp_ssh_key {
     tpu_name=$3
 
     gcloud alpha compute tpus tpu-vm scp \
-        $HOME/.ssh/authorized_keys \
-        $tpu_name:/home/$USER/.ssh/ \
+        $HOME/.ssh/google_compute_engine.pub \
+        $tpu_name:/home/$USER/.ssh/authorized_keys \
         --worker=all \
         --project $tpu_project \
         --zone $tpu_zone
@@ -164,7 +164,7 @@ function _tpu_ssh {
 
     tpu_ips=$(_tpu_ips $tpu_zone $tpu_project $tpu_name)
     for host in $tpu_ips; do
-        ssh $host "$command" &
+        ssh -o "StrictHostKeyChecking no" -o "UserKnownHostsFile /dev/null" $host "$command" &
     done
     wait &> /dev/null
 }
@@ -190,8 +190,8 @@ function tpu {
     export PROJECT_HOME='<your project home directory (parent of EasyLM)'
     export PROJECT_NAME='EasyLM'
     tpu_zone='<tpu zone>'
-    if [ "$1" = "<short name for your tpu project, you can define multiple ones>" ]; then
-        tpu_project='<full name for your tpu project>'
+    if [ "$1" = "tulu-ppo" ]; then
+        tpu_project='ai2-tpu'
         tpu_zone='us-east1-d'
         tpu_gen='v3'
     else

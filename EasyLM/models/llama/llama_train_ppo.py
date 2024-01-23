@@ -27,6 +27,12 @@ from EasyLM.models.llama.llama_model import (
 )
 from transformers import GenerationConfig
 
+try:
+    from jax_smi import initialise_tracking
+    initialise_tracking()
+except ImportError:
+    print("jax_smi not installed, skipping SMI tracking")
+
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,

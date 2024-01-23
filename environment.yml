@@ -14,6 +14,7 @@ dependencies:
     - flax==0.7.2
     - mlxu==0.1.12
     - einops==0.7.0
+    - jax-smi==1.0.3
   - sentencepiece=0.1.96
   - tqdm
   - wandb
