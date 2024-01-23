@@ -314,7 +314,7 @@ def main(argv):
     steps_per_epoch = len(wrapped_dataset) // real_batch_size
     steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
-    seq_length = wrapped_dataset.seq_length
+    seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
     print(f'real_batch_size={real_batch_size}')
     print(f'steps_per_epoch={steps_per_epoch}')
