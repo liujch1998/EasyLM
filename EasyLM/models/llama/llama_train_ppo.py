@@ -98,12 +98,15 @@ def detach(x):
 def ppo_loss(
     policy_model, value_model,
     policy_params, value_params,
+    rng,
     input_ids, attn_mask, cont_input_ids, cont_attn_mask, old_cont_logps, old_cont_values, advantages, returns,
 ):
+    rng_generator = JaxRNG(rng)
+
     PL = input_ids.shape[1] - cont_input_ids.shape[1]
 
     # run forward pass on policy
-    new_cont_logits = policy_model(input_ids, attn_mask, params=policy_params['params']).logits[:, PL-1:-1, :] # (B, CL, V)
+    new_cont_logits = policy_model(input_ids, attn_mask, params=policy_params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
     new_cont_logps = jnp.take_along_axis(jax.nn.log_softmax(new_cont_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
 
     ratio = jnp.exp(new_cont_logps - old_cont_logps)
@@ -112,7 +115,7 @@ def ppo_loss(
     pg_loss = masked_mean(jnp.maximum(pg_losses, pg_losses2), cont_attn_mask)
 
     # run forward pass on value
-    new_cont_values = value_model(input_ids, attn_mask, params=value_params['params']).logits[:, PL-1:-1, 0] # (B, CL)
+    new_cont_values = value_model(input_ids, attn_mask, params=value_params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, 0] # (B, CL)
 
     new_cont_values_clipped = old_cont_values + jnp.clip(new_cont_values - old_cont_values, -FLAGS.cliprange_value, FLAGS.cliprange_value)
     vf_losses1 = jnp.square(new_cont_values - returns) # (B, CL)
@@ -156,8 +159,10 @@ def compute_advantages(values, rewards, mask):
 def ppo_step(
     policy_train_state, reference_train_state, value_train_state, reward_train_state,
     policy_model, reference_model, value_model, reward_model,
-    batch,
+    rng, batch,
 ):
+    rng_generator = JaxRNG(rng)
+
     prompt_input_ids, prompt_attn_mask = batch['prompt_input_ids'], batch['prompt_attn_mask']
     reward_prompt_input_ids, reward_prompt_attn_mask = batch['reward_prompt_input_ids'], batch['reward_prompt_attn_mask']
     PL = prompt_input_ids.shape[1]
@@ -172,6 +177,7 @@ def ppo_step(
         do_sample=True,
         temperature=FLAGS.temperature,
         pad_token_id=pad_token_id,
+        eos_token_id=FLAGS.llama.eos_token_id,
         max_new_tokens=FLAGS.max_continuation_len,
     )
     outputs = policy_model.generate(
@@ -179,6 +185,7 @@ def ppo_step(
         attention_mask=prompt_attn_mask,
         generation_config=generation_config,
         params=policy_train_state.params['params'],
+        prng_key=rng_generator(),
     )
     input_ids = outputs.sequences # (B, L)
     attn_mask = jnp.where(input_ids == pad_token_id, 0, 1) # (B, L)
@@ -193,7 +200,7 @@ def ppo_step(
     # reward_input_ids = jnp.concatenate([reward_prompt_input_ids, cont_input_ids], axis=1) # (B, PL+CL)
     # reward_attn_mask = jnp.concatenate([reward_prompt_attn_mask, cont_attn_mask], axis=1) # (B, PL+CL)
     # reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
-    # reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params']).logits[:, :, 0] # (B, L)
+    # reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits[:, :, 0] # (B, L)
     # last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
     # scores = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
     # scores = jax.lax.stop_gradient(scores)
@@ -201,21 +208,21 @@ def ppo_step(
 
     # # run forward pass on policy
     # t = time.time()
-    # cont_logits = policy_model(input_ids, attn_mask, params=policy_train_state.params['params']).logits[:, PL-1:-1, :] # (B, CL, V)
+    # cont_logits = policy_model(input_ids, attn_mask, params=policy_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
     # cont_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
     # cont_logps = jax.lax.stop_gradient(cont_logps)
     # timing['time/ppo/policy_forward_pass'] = time.time() - t
 
     # # run forward pass on reference
     # t = time.time()
-    # cont_ref_logits = reference_model(input_ids, attn_mask, params=reference_train_state.params['params']).logits[:, PL-1:-1, :] # (B, CL, V)
+    # cont_ref_logits = reference_model(input_ids, attn_mask, params=reference_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
     # cont_ref_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_ref_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
     # cont_ref_logps = jax.lax.stop_gradient(cont_ref_logps)
     # timing['time/ppo/reference_forward_pass'] = time.time() - t
 
     # # run forward pass on value
     # t = time.time()
-    # cont_values = value_model(input_ids, attn_mask, params=value_train_state.params['params']).logits[:, PL-1:-1, 0] # (B, CL)
+    # cont_values = value_model(input_ids, attn_mask, params=value_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, 0] # (B, CL)
     # cont_values = jax.lax.stop_gradient(cont_values)
     # timing['time/ppo/value_forward_pass'] = time.time() - t
 
@@ -251,6 +258,7 @@ def ppo_step(
     #         loss_fn = lambda policy_params, value_params: ppo_loss(
     #             policy_model, value_model,
     #             policy_params, value_params,
+    #             rng_generator(),
     #             mb_input_ids, mb_attn_mask, mb_cont_input_ids, mb_cont_attn_mask, mb_cont_logps, mb_cont_values, mb_advantages, mb_returns,
     #         )
     #         grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
@@ -419,7 +427,7 @@ def main(argv):
         policy_train_state, value_train_state, stats, examples = ppo_step(
             policy_train_state, reference_train_state, value_train_state, reward_train_state,
             policy_model, reference_model, value_model, reward_model,
-            batch,
+            rng_generator(), batch,
         )
         # we dont return the ref train state because we dont want to update it
         return policy_train_state, value_train_state, rng_generator(), stats, examples
