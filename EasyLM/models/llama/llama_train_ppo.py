@@ -211,103 +211,103 @@ def ppo_step(
     cont_position_ids = position_ids[:, PL:] # (B, CL)
     timing['time/ppo/rollout'] = time.time() - t
 
-    # # run reward model
-    # t = time.time()
-    # reward_input_ids = jnp.concatenate([reward_prompt_input_ids, cont_input_ids], axis=1) # (B, PL+CL)
-    # reward_attn_mask = jnp.concatenate([reward_prompt_attn_mask, cont_attn_mask], axis=1) # (B, PL+CL)
-    # reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
-    # reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits[:, :, 0] # (B, L)
-    # last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
-    # scores = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
-    # scores = jax.lax.stop_gradient(scores)
-    # timing['time/ppo/reward_forward_pass'] = time.time() - t
+    # run reward model
+    t = time.time()
+    reward_input_ids = jnp.concatenate([reward_prompt_input_ids, cont_input_ids], axis=1) # (B, PL+CL)
+    reward_attn_mask = jnp.concatenate([reward_prompt_attn_mask, cont_attn_mask], axis=1) # (B, PL+CL)
+    reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
+    reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits[:, :, 0] # (B, L)
+    last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
+    scores = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+    scores = jax.lax.stop_gradient(scores)
+    timing['time/ppo/reward_forward_pass'] = time.time() - t
 
-    # # run forward pass on policy
-    # t = time.time()
-    # cont_logits = policy_model(input_ids, attn_mask, params=policy_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
-    # cont_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
-    # cont_logps = jax.lax.stop_gradient(cont_logps)
-    # timing['time/ppo/policy_forward_pass'] = time.time() - t
+    # run forward pass on policy
+    t = time.time()
+    cont_logits = policy_model(input_ids, attn_mask, params=policy_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
+    cont_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
+    cont_logps = jax.lax.stop_gradient(cont_logps)
+    timing['time/ppo/policy_forward_pass'] = time.time() - t
 
-    # # run forward pass on reference
-    # t = time.time()
-    # cont_ref_logits = reference_model(input_ids, attn_mask, params=reference_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
-    # cont_ref_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_ref_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
-    # cont_ref_logps = jax.lax.stop_gradient(cont_ref_logps)
-    # timing['time/ppo/reference_forward_pass'] = time.time() - t
+    # run forward pass on reference
+    t = time.time()
+    cont_ref_logits = reference_model(input_ids, attn_mask, params=reference_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
+    cont_ref_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_ref_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
+    cont_ref_logps = jax.lax.stop_gradient(cont_ref_logps)
+    timing['time/ppo/reference_forward_pass'] = time.time() - t
 
-    # # run forward pass on value
-    # t = time.time()
-    # cont_values = value_model(input_ids, attn_mask, params=value_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, 0] # (B, CL)
-    # cont_values = jax.lax.stop_gradient(cont_values)
-    # timing['time/ppo/value_forward_pass'] = time.time() - t
+    # run forward pass on value
+    t = time.time()
+    cont_values = value_model(input_ids, attn_mask, params=value_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, 0] # (B, CL)
+    cont_values = jax.lax.stop_gradient(cont_values)
+    timing['time/ppo/value_forward_pass'] = time.time() - t
 
-    # # penalize rewards
-    # t = time.time()
-    # kl = cont_logps - cont_ref_logps # (B, CL)
-    # non_score_reward = -FLAGS.kl_coef * kl # (B, CL)
-    # cont_last_token_index = jnp.argmax(cont_position_ids, axis=1) # (B)
-    # rewards = non_score_reward.at[:, cont_last_token_index].add(scores) # (B, CL)
-    # rewards = jax.lax.stop_gradient(rewards)
-    # timing['time/ppo/compute_rewards'] = time.time() - t
+    # penalize rewards
+    t = time.time()
+    kl = cont_logps - cont_ref_logps # (B, CL)
+    non_score_reward = -FLAGS.kl_coef * kl # (B, CL)
+    cont_last_token_index = jnp.argmax(cont_position_ids, axis=1) # (B)
+    rewards = non_score_reward.at[:, cont_last_token_index].add(scores) # (B, CL)
+    rewards = jax.lax.stop_gradient(rewards)
+    timing['time/ppo/compute_rewards'] = time.time() - t
 
-    # # compute advantages
-    # t = time.time()
-    # advantages, returns = compute_advantages(cont_values, rewards, cont_attn_mask) # (B, CL), (B, CL)
-    # timing['time/ppo/compute_advantages'] = time.time() - t
+    # compute advantages
+    t = time.time()
+    advantages, returns = compute_advantages(cont_values, rewards, cont_attn_mask) # (B, CL), (B, CL)
+    timing['time/ppo/compute_advantages'] = time.time() - t
 
-    # t = time.time()
-    # all_stats = []
-    # for ppo_epoch in range(FLAGS.ppo_epochs):
-    #     assert cont_input_ids.shape[0] % FLAGS.mini_batch_size == 0
-    #     for mb_start in range(0, cont_input_ids.shape[0], FLAGS.mini_batch_size):
-    #         mb_end = mb_start + FLAGS.mini_batch_size
-    #         mb_input_ids = input_ids[mb_start:mb_end]
-    #         mb_attn_mask = attn_mask[mb_start:mb_end]
-    #         mb_cont_input_ids = cont_input_ids[mb_start:mb_end]
-    #         mb_cont_attn_mask = cont_attn_mask[mb_start:mb_end]
-    #         mb_cont_logps = cont_logps[mb_start:mb_end]
-    #         mb_cont_values = cont_values[mb_start:mb_end]
-    #         mb_advantages = advantages[mb_start:mb_end]
-    #         mb_returns = returns[mb_start:mb_end]
+    t = time.time()
+    all_stats = []
+    for ppo_epoch in range(FLAGS.ppo_epochs):
+        assert cont_input_ids.shape[0] % FLAGS.mini_batch_size == 0
+        for mb_start in range(0, cont_input_ids.shape[0], FLAGS.mini_batch_size):
+            mb_end = mb_start + FLAGS.mini_batch_size
+            mb_input_ids = input_ids[mb_start:mb_end]
+            mb_attn_mask = attn_mask[mb_start:mb_end]
+            mb_cont_input_ids = cont_input_ids[mb_start:mb_end]
+            mb_cont_attn_mask = cont_attn_mask[mb_start:mb_end]
+            mb_cont_logps = cont_logps[mb_start:mb_end]
+            mb_cont_values = cont_values[mb_start:mb_end]
+            mb_advantages = advantages[mb_start:mb_end]
+            mb_returns = returns[mb_start:mb_end]
 
-    #         loss_fn = lambda policy_params, value_params: ppo_loss(
-    #             policy_model, value_model,
-    #             policy_params, value_params,
-    #             rng_generator(),
-    #             mb_input_ids, mb_attn_mask, mb_cont_input_ids, mb_cont_attn_mask, mb_cont_logps, mb_cont_values, mb_advantages, mb_returns,
-    #         )
-    #         grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
-    #         (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
-    #         # policy_grads = clip_grad(policy_grads, max_grad_norm=FLAGS.max_grad_norm)
-    #         # value_grads = clip_grad(value_grads, max_grad_norm=FLAGS.max_grad_norm)
-    #         policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
-    #         value_train_state = value_train_state.apply_gradients(grads=value_grads)
-    #         all_stats.append(stats)
-    # timing['time/ppo/optimize_step'] = time.time() - t
+            loss_fn = lambda policy_params, value_params: ppo_loss(
+                policy_model, value_model,
+                policy_params, value_params,
+                rng_generator(),
+                mb_input_ids, mb_attn_mask, mb_cont_input_ids, mb_cont_attn_mask, mb_cont_logps, mb_cont_values, mb_advantages, mb_returns,
+            )
+            grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
+            (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
+            # policy_grads = clip_grad(policy_grads, max_grad_norm=FLAGS.max_grad_norm)
+            # value_grads = clip_grad(value_grads, max_grad_norm=FLAGS.max_grad_norm)
+            policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
+            value_train_state = value_train_state.apply_gradients(grads=value_grads)
+            all_stats.append(stats)
+    timing['time/ppo/optimize_step'] = time.time() - t
 
-    # t = time.time()
-    # stats = {k: jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0) for k in all_stats[0].keys()}
-    # stats.update({
-    #     'env/reward_mean': detach(jnp.mean(scores)),
-    #     'objective/kl': detach(masked_mean(kl, cont_attn_mask)),
-    #     'objective/kl_coef': FLAGS.kl_coef,
-    #     'ppo/mean_non_score_reward': detach(masked_mean(non_score_reward, cont_attn_mask)),
-    #     'ppo/mean_scores': detach(jnp.mean(scores)),
-    #     'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
-    # })
-    # examples = {
-    #     'prompt_input_ids': detach(prompt_input_ids),
-    #     'cont_input_ids': detach(cont_input_ids),
-    #     'scores': detach(scores),
-    # }
-    # timing['time/ppo/calc_stats'] = time.time() - t
-
-    stats = {}
+    t = time.time()
+    stats = {k: jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0) for k in all_stats[0].keys()}
+    stats.update({
+        'env/reward_mean': detach(jnp.mean(scores)),
+        'objective/kl': detach(masked_mean(kl, cont_attn_mask)),
+        'objective/kl_coef': FLAGS.kl_coef,
+        'ppo/mean_non_score_reward': detach(masked_mean(non_score_reward, cont_attn_mask)),
+        'ppo/mean_scores': detach(jnp.mean(scores)),
+        'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
+    })
     examples = {
         'prompt_input_ids': detach(prompt_input_ids),
         'cont_input_ids': detach(cont_input_ids),
+        'scores': detach(scores),
     }
+    timing['time/ppo/calc_stats'] = time.time() - t
+
+    # stats = {}
+    # examples = {
+    #     'prompt_input_ids': detach(prompt_input_ids),
+    #     'cont_input_ids': detach(cont_input_ids),
+    # }
 
     timing['time/ppo/total'] = time.time() - t0
     stats.update(timing)
@@ -556,11 +556,11 @@ def main(argv):
                     stats = {k: float(v) for k, v in stats.items()}
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    examples = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
-                    stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=examples)
-                    # rewards = examples['scores']
-                    # examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
-                    # stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
+                    # examples = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
+                    # stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=examples)
+                    rewards = examples['scores']
+                    examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
+                    stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
                     # examples = [[q, r] for q, r in zip(queries, responses)]
                     # stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=examples)
                     logger.log(stats)
