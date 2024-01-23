@@ -198,12 +198,12 @@ def ppo_step(
         params=policy_train_state.params['params'],
         prng_key=rng_generator(),
     )
+    input_ids = outputs.sequences # (B, L)
 
     # TODO: This is a hack because generate() weirdly forces the last token to be 0 instead of 2
-    last_token_index = jnp.argmax(jnp.cumsum(jnp.where(outputs.sequences == pad_token_id, 0, 1), axis=1), axis=1) # (B)
-    outputs.sequences = outputs.sequences.at[jnp.arange(outputs.sequences.shape[0]), last_token_index + 1].set(eos_token_id)
+    last_token_index = jnp.argmax(jnp.cumsum(jnp.where(input_ids == pad_token_id, 0, 1), axis=1), axis=1) # (B)
+    input_ids = input_ids.at[jnp.arange(input_ids.shape[0]), last_token_index + 1].set(eos_token_id)
 
-    input_ids = outputs.sequences # (B, L)
     attn_mask = jnp.where(input_ids == pad_token_id, 0, 1) # (B, L)
     position_ids = jnp.clip(jnp.cumsum(attn_mask, axis=1) - 1, 0, None) # (B, L)
     cont_input_ids = input_ids[:, PL:] # (B, CL)
