@@ -162,6 +162,7 @@ def ppo_step(
     rng, batch,
 ):
     rng_generator = JaxRNG(rng)
+    batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
 
     prompt_input_ids, prompt_attn_mask = batch['prompt_input_ids'], batch['prompt_attn_mask']
     reward_prompt_input_ids, reward_prompt_attn_mask = batch['reward_prompt_input_ids'], batch['reward_prompt_attn_mask']
