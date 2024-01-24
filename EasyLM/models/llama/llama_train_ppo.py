@@ -60,7 +60,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     log_all_worker=False,
 
     use_tpu=False,
-    num_epochs=4,
+    num_epochs=1,
     max_steps_per_epoch=0,
     max_continuation_len=16,
     ppo_epochs=4,
@@ -73,7 +73,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     cliprange=0.2,
     cliprange_value=0.2,
     vf_coef=0.1,
-    # max_grad_norm=1.0,
+    max_grad_norm=1.0,
 )
 
 
@@ -93,12 +93,13 @@ def masked_mean(x, mask):
 def detach(x):
     return jax.lax.stop_gradient(x)
 
-# # TODO: verify this implementation (this was written by ChatGPT)
-# # TODO: this takes too long to compile! why??
-# def clip_grad(grad, max_grad_norm):
-#     norm = jnp.sqrt(sum([jnp.sum(jnp.square(g)) for g in jax.tree_util.tree_leaves(grad)]))
-#     clip = lambda x: jnp.where(norm < max_grad_norm, x, x * max_grad_norm / (norm + 1e-6))
-#     return jax.tree_util.tree_map(clip, grad)
+# TODO: verify this implementation (this was written by ChatGPT) -- Cross-checked with optax impl, seems fine
+# TODO: this takes too long to compile! why?? -- Not significantly slower on debug model
+def clip_grad(grad, max_grad_norm):
+    norm = jnp.sqrt(sum([jnp.sum(jnp.square(g)) for g in jax.tree_util.tree_leaves(grad)]))
+    trigger = jnp.squeeze(norm < max_grad_norm)
+    clip_fn = lambda x: jax.lax.select(trigger, x, x * max_grad_norm / (norm + 1e-6))
+    return jax.tree_util.tree_map(clip_fn, grad)
 
 
 def ppo_loss(
@@ -279,8 +280,8 @@ def ppo_step(
             )
             grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
             (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
-            # policy_grads = clip_grad(policy_grads, max_grad_norm=FLAGS.max_grad_norm)
-            # value_grads = clip_grad(value_grads, max_grad_norm=FLAGS.max_grad_norm)
+            policy_grads = clip_grad(policy_grads, max_grad_norm=FLAGS.max_grad_norm)
+            value_grads = clip_grad(value_grads, max_grad_norm=FLAGS.max_grad_norm)
             policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
             value_train_state = value_train_state.apply_gradients(grads=value_grads)
             all_stats.append(stats)
