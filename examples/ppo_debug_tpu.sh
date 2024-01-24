@@ -28,7 +28,5 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-central1-f --proje
     --use_tpu=True \
     --mini_batch_size=8 \
     --max_continuation_len=16 \
-    --save_model_freq=0 \
-    --num_epochs=1 \
     --max_steps_per_epoch=1000 \
     &> ~/all.log &"

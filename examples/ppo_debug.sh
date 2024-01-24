@@ -27,5 +27,4 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --use_tpu=False \
     --mini_batch_size=1 \
     --max_continuation_len=16 \
-    --num_epochs=1 \
     --max_steps_per_epoch=1

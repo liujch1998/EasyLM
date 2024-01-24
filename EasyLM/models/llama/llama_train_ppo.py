@@ -74,6 +74,8 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     cliprange_value=0.2,
     vf_coef=0.1,
     max_grad_norm=1.0,
+    reward_gain=1.0,
+    reward_bias=0.0,
 )
 
 
@@ -219,7 +221,8 @@ def ppo_step(
     reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
     reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits[:, :, 0] # (B, L)
     last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
-    scores = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+    reward = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+    scores = reward * FLAGS.reward_gain + FLAGS.reward_bias # (B)
     scores = jax.lax.stop_gradient(scores)
     timing['time/ppo/reward_forward_pass'] = time.time() - t
 
@@ -290,7 +293,7 @@ def ppo_step(
     t = time.time()
     stats = {k: jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0) for k in all_stats[0].keys()}
     stats.update({
-        'env/reward_mean': detach(jnp.mean(scores)),
+        'env/reward_mean': detach(jnp.mean(reward)),
         'objective/kl': detach(masked_mean(kl, cont_attn_mask)),
         'objective/kl_coef': FLAGS.kl_coef,
         'ppo/mean_non_score_reward': detach(masked_mean(non_score_reward, cont_attn_mask)),
