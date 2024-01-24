@@ -303,7 +303,7 @@ def ppo_step(
     examples = {
         'prompt_input_ids': detach(prompt_input_ids),
         'cont_input_ids': detach(cont_input_ids),
-        'scores': detach(scores),
+        'reward': detach(reward),
     }
     timing['time/ppo/calc_stats'] = time.time() - t
 
@@ -562,7 +562,7 @@ def main(argv):
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     # examples = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
                     # stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=examples)
-                    rewards = examples['scores']
+                    rewards = examples['reward']
                     examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
                     # examples = [[q, r] for q, r in zip(queries, responses)]
