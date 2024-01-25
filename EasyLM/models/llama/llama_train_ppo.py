@@ -78,19 +78,25 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     reward_bias=0.0,
 )
 
-
-def whiten(rewards, mask, shift_mean=True):
-    rewards = rewards * mask
-    mean = jnp.sum(rewards, axis=-1, keepdims=True) / jnp.sum(mask, axis=-1, keepdims=True)
-    rewards = rewards - mean
-    if shift_mean:
-        rewards = rewards + jnp.mean(rewards, axis=-1, keepdims=True)
-    std = jnp.sqrt(jnp.sum(rewards ** 2, axis=-1, keepdims=True) / jnp.sum(mask, axis=-1, keepdims=True))
-    rewards = rewards / std
-    return rewards
-
 def masked_mean(x, mask):
     return jnp.sum(x * mask) / jnp.sum(mask)
+
+def masked_var(x, mask, unbiased=True):
+    mean = masked_mean(x, mask)
+    centered_values = x - mean
+    variance = masked_mean(jnp.square(centered_values), mask)
+    if unbiased:
+        mask_sum = jnp.sum(mask)
+        bessel_correction = mask_sum / (mask_sum - 1)
+        variance = variance * bessel_correction
+    return variance
+
+def whiten(x, mask, shift_mean=True):
+    mean, var = masked_mean(x, mask), masked_var(x, mask)
+    whitened = (x - mean) / jnp.sqrt(var + 1e-6)
+    if not shift_mean:
+        whitened += mean
+    return whitened
 
 def detach(x):
     return jax.lax.stop_gradient(x)
@@ -304,6 +310,13 @@ def ppo_step(
         'prompt_input_ids': detach(prompt_input_ids),
         'cont_input_ids': detach(cont_input_ids),
         'reward': detach(reward),
+        # 'scores': detach(scores),
+        # 'non_score_reward': detach(non_score_reward),
+        # 'cont_last_token_index': detach(cont_last_token_index),
+        # 'rewards': detach(rewards),
+        # 'values': detach(cont_values),
+        # 'returns': detach(returns),
+        # 'advantages': detach(advantages),
     }
     timing['time/ppo/calc_stats'] = time.time() - t
 
@@ -376,10 +389,10 @@ def main(argv):
     if llama_config_reward.vocab_size < wrapped_dataset.vocab_size:
         llama_config_reward.update(dict(vocab_size=wrapped_dataset.vocab_size))
 
-    print(FLAGS.llama.bos_token_id, FLAGS.llama.eos_token_id) # do not use these!!
-    # print(FLAGS.tokenizer) # nothing in here
-    print(tokenizer.pad_token_id, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token, tokenizer.bos_token, tokenizer.eos_token)
-    print(llama_config_policy.pad_token_id, llama_config_policy.bos_token_id, llama_config_policy.eos_token_id, llama_config_policy)
+    # print(FLAGS.llama.bos_token_id, FLAGS.llama.eos_token_id) # do not use these!!
+    # # print(FLAGS.tokenizer) # nothing in here
+    # print(tokenizer.pad_token_id, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token, tokenizer.bos_token, tokenizer.eos_token)
+    # print(llama_config_policy.pad_token_id, llama_config_policy.bos_token_id, llama_config_policy.eos_token_id, llama_config_policy)
 
     policy_model = FlaxLLaMAForCausalLM(llama_config_policy, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
     value_model = FlaxLLaMAForCausalLM(llama_config_reward, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
@@ -468,8 +481,7 @@ def main(argv):
         FLAGS.checkpointer, logger.output_dir,
         enable=jax.process_index() == 0,
     )
-    def save_checkpoint(policy_train_state, value_train_state, milestone=False):
-        step = int(jax.device_get(policy_train_state.step))
+    def save_checkpoint(policy_train_state, value_train_state, step, milestone=False):
         metadata = dict(
             step=step,
             variant=variant,
@@ -482,7 +494,13 @@ def main(argv):
             metadata=metadata,
             milestone=milestone,
         )
-        # TODO: save value model
+        checkpointer.save_all(
+            train_state=value_train_state,
+            gather_fns=gather_fns_reward,
+            metadata=metadata,
+            milestone=milestone,
+            is_value=True,
+        )
 
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
@@ -560,23 +578,30 @@ def main(argv):
                     stats = {k: float(v) for k, v in stats.items()}
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    # examples = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
-                    # stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=examples)
+                    # rows = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
+                    # stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=rows)
                     rewards = examples['reward']
-                    examples = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
-                    stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=examples)
-                    # examples = [[q, r] for q, r in zip(queries, responses)]
-                    # stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=examples)
+                    rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
+                    stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
+                    # rows = [[q, r] for q, r in zip(queries, responses)]
+                    # stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=rows)
                     logger.log(stats)
+                    # print(f'scores: {examples["scores"][0]}')
+                    # print(f'non_score_reward: {examples["non_score_reward"][0]}')
+                    # print(f'cont_last_token_index: {examples["cont_last_token_index"][0]}')
+                    # print(f'rewards: {examples["rewards"][0]}')
+                    # print(f'values: {examples["values"][0]}')
+                    # print(f'advantages: {examples["advantages"][0]}')
+                    # print(f'returns: {examples["returns"][0]}')
                     # tqdm.write("\n" + pprint.pformat(stats) + "\n")
 
                 if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
-                    save_checkpoint(policy_train_state, value_train_state, milestone=True)
+                    save_checkpoint(policy_train_state, value_train_state, step=step, milestone=True)
                 elif FLAGS.save_model_freq > 0 and (step + 1) % FLAGS.save_model_freq == 0:
-                    save_checkpoint(policy_train_state, value_train_state)
+                    save_checkpoint(policy_train_state, value_train_state, step=step)
             # save model at the end of each epoch
             if FLAGS.save_model_freq > 0:
-                save_checkpoint(policy_train_state, value_train_state, milestone=True)
+                save_checkpoint(policy_train_state, value_train_state, step=step, milestone=True)
 
 
 if __name__ == "__main__":

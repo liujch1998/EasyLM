@@ -24,6 +24,8 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --logger.prefix='debug' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
+    --logger.output_dir='/net/nfs.cirrascale/allennlp/jiachengl/n-tulu-ppo-jax/runs/' \
+    --save_model_freq=1 \
     --use_tpu=False \
     --mini_batch_size=1 \
     --max_continuation_len=16 \
