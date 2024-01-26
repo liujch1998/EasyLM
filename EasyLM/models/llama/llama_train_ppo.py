@@ -76,10 +76,20 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     max_grad_norm=1.0,
     reward_gain=1.0,
     reward_bias=0.0,
+    generate_only=False,
 )
 
-def masked_mean(x, mask):
-    return jnp.sum(x * mask) / jnp.sum(mask)
+def masked_sum(x, mask, axis=None):
+    if axis is None:
+        return jnp.sum(x * mask)
+    else:
+        return jnp.sum(x * mask, axis=axis)
+
+def masked_mean(x, mask, axis=None):
+    if axis is None:
+        return jnp.sum(x * mask) / jnp.sum(mask)
+    else:
+        return jnp.sum(x * mask, axis=axis) / jnp.sum(mask, axis=axis)
 
 def masked_var(x, mask, unbiased=True):
     mean = masked_mean(x, mask)
@@ -198,7 +208,7 @@ def ppo_step(
         bos_token_id=bos_token_id,
         eos_token_id=eos_token_id,
         max_new_tokens=FLAGS.max_continuation_len,
-        forced_eos_token_id=eos_token_id,
+        # forced_eos_token_id=eos_token_id,
     )
     outputs = policy_model.generate(
         input_ids=prompt_input_ids,
@@ -209,9 +219,9 @@ def ppo_step(
     )
     input_ids = outputs.sequences # (B, L)
 
-    # TODO: This is a hack because generate() weirdly forces the last token to be 0 instead of 2
-    last_token_index = jnp.argmax(jnp.cumsum(jnp.where(input_ids == pad_token_id, 0, 1), axis=1), axis=1) # (B)
-    input_ids = input_ids.at[jnp.arange(input_ids.shape[0]), last_token_index + 1].set(eos_token_id)
+    # # TODO: This is a hack because generate() weirdly forces the last token to be 0 instead of 2
+    # last_token_index = jnp.argmax(jnp.cumsum(jnp.where(input_ids == pad_token_id, 0, 1), axis=1), axis=1) # (B)
+    # input_ids = input_ids.at[jnp.arange(input_ids.shape[0]), last_token_index + 1].set(eos_token_id)
 
     attn_mask = jnp.where(input_ids == pad_token_id, 0, 1) # (B, L)
     position_ids = jnp.clip(jnp.cumsum(attn_mask, axis=1) - 1, 0, None) # (B, L)
@@ -220,14 +230,25 @@ def ppo_step(
     cont_position_ids = position_ids[:, PL:] # (B, CL)
     timing['time/ppo/rollout'] = time.time() - t
 
+    if FLAGS.generate_only:
+        stats = {}
+        examples = {
+            'prompt_input_ids': detach(prompt_input_ids),
+            'cont_input_ids': detach(cont_input_ids),
+        }
+        return policy_train_state, value_train_state, stats, examples
+
     # run reward model
     t = time.time()
     reward_input_ids = jnp.concatenate([reward_prompt_input_ids, cont_input_ids], axis=1) # (B, PL+CL)
     reward_attn_mask = jnp.concatenate([reward_prompt_attn_mask, cont_attn_mask], axis=1) # (B, PL+CL)
     reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
     reward_output = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits[:, :, 0] # (B, L)
-    last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
-    reward = jnp.take_along_axis(reward_output, last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+    reward_last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
+    reward = jnp.take_along_axis(reward_output, reward_last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+    # If the last token is not EOS, then we set the reward to -10
+    reward_last_token_id = jnp.take_along_axis(reward_input_ids, reward_last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+    reward = jnp.where(reward_last_token_id == eos_token_id, reward, -10.0) # (B)
     scores = reward * FLAGS.reward_gain + FLAGS.reward_bias # (B)
     scores = jax.lax.stop_gradient(scores)
     timing['time/ppo/reward_forward_pass'] = time.time() - t
@@ -300,10 +321,14 @@ def ppo_step(
     stats = {k: jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0) for k in all_stats[0].keys()}
     stats.update({
         'env/reward_mean': detach(jnp.mean(reward)),
-        'objective/kl': detach(masked_mean(kl, cont_attn_mask)),
+        'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
+        'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
         'objective/kl_coef': FLAGS.kl_coef,
+        'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
         'ppo/mean_non_score_reward': detach(masked_mean(non_score_reward, cont_attn_mask)),
+        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_reward, cont_attn_mask, axis=1))),
         'ppo/mean_scores': detach(jnp.mean(scores)),
+        'ppo/score_total'
         'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
     })
     examples = {
@@ -319,12 +344,6 @@ def ppo_step(
         # 'advantages': detach(advantages),
     }
     timing['time/ppo/calc_stats'] = time.time() - t
-
-    # stats = {}
-    # examples = {
-    #     'prompt_input_ids': detach(prompt_input_ids),
-    #     'cont_input_ids': detach(cont_input_ids),
-    # }
 
     timing['time/ppo/total'] = time.time() - t0
     stats.update(timing)
@@ -578,13 +597,13 @@ def main(argv):
                     stats = {k: float(v) for k, v in stats.items()}
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    # rows = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
-                    # stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=rows)
-                    rewards = examples['reward']
-                    rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
-                    stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
-                    # rows = [[q, r] for q, r in zip(queries, responses)]
-                    # stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=rows)
+                    if FLAGS.generate_only:
+                        rows = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
+                        stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=rows)
+                    else:
+                        rewards = examples['reward']
+                        rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
+                        stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
                     # print(f'scores: {examples["scores"][0]}')
                     # print(f'non_score_reward: {examples["non_score_reward"][0]}')
