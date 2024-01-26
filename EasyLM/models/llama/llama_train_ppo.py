@@ -59,14 +59,18 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     logger=mlxu.WandBLogger.get_default_config(),
     log_all_worker=False,
 
-    use_tpu=False,
-    num_epochs=1,
-    max_steps_per_epoch=0,
     max_continuation_len=16,
-    ppo_epochs=4,
     mini_batch_size=1,
-    temperature=0.7,
+    use_tpu=False,
+    # relatively dynamic flags
+    num_epochs=1,
+    ppo_epochs=4,
+    lr=1e-5,
     kl_coef=0.2,
+    reward_gain=1.0,
+    reward_bias=0.0,
+    # relatively static flags
+    temperature=0.7,
     whiten_rewards=False,
     gamma=1.0,
     lam=0.95,
@@ -74,8 +78,8 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     cliprange_value=0.2,
     vf_coef=0.1,
     max_grad_norm=1.0,
-    reward_gain=1.0,
-    reward_bias=0.0,
+    # debugging flags
+    max_steps_per_epoch=0,
     generate_only=False,
 )
 
@@ -111,8 +115,8 @@ def whiten(x, mask, shift_mean=True):
 def detach(x):
     return jax.lax.stop_gradient(x)
 
-# TODO: verify this implementation (this was written by ChatGPT) -- Cross-checked with optax impl, seems fine
-# TODO: this takes too long to compile! why?? -- Not significantly slower on debug model
+# Verify this implementation (this was written by ChatGPT) -- Cross-checked with optax impl, seems fine
+# This takes too long to compile! why?? -- Not significantly slower on debug model
 def clip_grad(grad, max_grad_norm):
     norm = jnp.sqrt(sum([jnp.sum(jnp.square(g)) for g in jax.tree_util.tree_leaves(grad)]))
     trigger = jnp.squeeze(norm < max_grad_norm)
@@ -219,9 +223,11 @@ def ppo_step(
     )
     input_ids = outputs.sequences # (B, L)
 
-    # # TODO: This is a hack because generate() weirdly forces the last token to be 0 instead of 2
-    # last_token_index = jnp.argmax(jnp.cumsum(jnp.where(input_ids == pad_token_id, 0, 1), axis=1), axis=1) # (B)
-    # input_ids = input_ids.at[jnp.arange(input_ids.shape[0]), last_token_index + 1].set(eos_token_id)
+    # TODO: This is a hack because generate() weirdly forces the last token to be 0 instead of 2
+    last_token_index = jnp.argmax(jnp.cumsum(jnp.where(input_ids == pad_token_id, 0, 1), axis=1), axis=1) # (B)
+    input_ids = jnp.concatenate([input_ids, input_ids[:, -1:]], axis=1) # (B, L+1)
+    input_ids = input_ids.at[jnp.arange(input_ids.shape[0]), last_token_index + 1].set(eos_token_id)
+    input_ids = input_ids[:, :-1] # (B, L)
 
     attn_mask = jnp.where(input_ids == pad_token_id, 0, 1) # (B, L)
     position_ids = jnp.clip(jnp.cumsum(attn_mask, axis=1) - 1, 0, None) # (B, L)
@@ -419,6 +425,9 @@ def main(argv):
     reward_model = FlaxLLaMAForCausalLM(llama_config_reward, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
 
     print("Building optimizer...")
+    FLAGS.optimizer.adamw_optimizer.init_lr = FLAGS.lr
+    FLAGS.optimizer.adamw_optimizer.lr = FLAGS.lr
+    FLAGS.optimizer.adamw_optimizer.end_lr = FLAGS.lr
     if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
         FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_steps)
     optimizer, optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
@@ -523,8 +532,6 @@ def main(argv):
 
     mesh = LLaMAConfig.get_jax_mesh(FLAGS.mesh_dim)
     with mesh:
-        # start_step = int(jax.device_get(policy_train_state.step)) # TODO: fix this
-
         # Load policy
         policy_train_state, policy_params = None, None
         if FLAGS.load_checkpoint_policy != '':

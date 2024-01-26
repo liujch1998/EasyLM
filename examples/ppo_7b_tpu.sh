@@ -9,13 +9,12 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --train_dataset.type='hf_prompt' \
     --train_dataset.text_processor.fields='[instruction]' \
     --train_dataset.hf_prompt_dataset.seq_length=1024 \
+    --max_continuation_len=1024 \
     --train_dataset.hf_prompt_dataset.batch_size=32 \
+    --mini_batch_size=32 \
     --train_dataset.hf_prompt_dataset.num_workers=32 \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
-    --optimizer.adamw_optimizer.init_lr=1e-6 \
-    --optimizer.adamw_optimizer.lr=1e-6 \
-    --optimizer.adamw_optimizer.end_lr=1e-6 \
     --optimizer.adamw_optimizer.warmup_ratio=0.0 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=True \
@@ -25,13 +24,12 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
     --logger.output_dir='~/n-tulu-ppo-jax/runs/' \
-    --save_model_freq=0 \
     --use_tpu=True \
-    --mini_batch_size=32 \
-    --max_continuation_len=1024 \
-    --max_steps_per_epoch=1 \
-    --reward_gain=1.0 --reward_bias=0.0 \
-    --kl_coef=0.01 \
     --ppo_epochs=1 \
+    --lr=1e-6 \
+    --kl_coef=0.01 \
+    --reward_gain=1.0 --reward_bias=0.0 \
+    --save_model_freq=0 \
+    --max_steps_per_epoch=1 \
     --generate_only=True \
     &> ~/n-tulu-ppo-jax/all.log &"
