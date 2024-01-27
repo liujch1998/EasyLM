@@ -283,7 +283,7 @@ def ppo_step(
     kl = cont_logps - cont_ref_logps # (B, CL)
     non_score_rewards = -FLAGS.kl_coef * kl # (B, CL)
     cont_last_token_index = jnp.argmax(cont_position_ids, axis=1) # (B)
-    rewards = non_score_rewards.at[:, cont_last_token_index].add(score) # (B, CL)
+    rewards = non_score_rewards.at[jnp.arange(input_ids.shape[0]), cont_last_token_index].add(score) # (B, CL)
     rewards = jax.lax.stop_gradient(rewards)
     timing['time/ppo/compute_rewards'] = time.time() - t
 
