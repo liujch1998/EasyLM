@@ -30,6 +30,6 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --kl_coef=0.01 \
     --reward_gain=1.0 --reward_bias=0.0 \
     --save_model_freq=0 \
-    --max_steps_per_epoch=1 \
-    --generate_only=True \
+    --max_steps_per_epoch=0 \
+    --generate_only=False \
     &> ~/n-tulu-ppo-jax/all.log &"

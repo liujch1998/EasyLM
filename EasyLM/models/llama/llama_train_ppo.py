@@ -182,7 +182,6 @@ def compute_advantages(values, rewards, mask):
     advantages = jnp.stack(advantages_reversed[::-1], axis=1)
     returns = advantages + values
     advantages = whiten(advantages, mask, shift_mean=True)
-    advantages = jax.lax.stop_gradient(advantages)
     return advantages, returns
 
 def ppo_step(
@@ -253,10 +252,10 @@ def ppo_step(
     reward_last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
     reward = jnp.take_along_axis(reward_output, reward_last_token_index[:, None], axis=-1).squeeze(-1) # (B)
     # If the last token is not EOS, then we set the reward to -10
-    reward_last_token_id = jnp.take_along_axis(reward_input_ids, reward_last_token_index[:, None], axis=-1).squeeze(-1) # (B)
-    reward = jnp.where(reward_last_token_id == eos_token_id, reward, -10.0) # (B)
-    scores = reward * FLAGS.reward_gain + FLAGS.reward_bias # (B)
-    scores = jax.lax.stop_gradient(scores)
+    reward_last_token_id = jnp.take_along_axis(reward_input_ids, reward_last_token_index[:, None], axis=-1).squeeze(-1)
+    reward = jnp.where(reward_last_token_id == eos_token_id, reward, -10.0)
+    score = reward * FLAGS.reward_gain + FLAGS.reward_bias # (B)
+    score = jax.lax.stop_gradient(score)
     timing['time/ppo/reward_forward_pass'] = time.time() - t
 
     # run forward pass on policy
@@ -282,15 +281,17 @@ def ppo_step(
     # penalize rewards
     t = time.time()
     kl = cont_logps - cont_ref_logps # (B, CL)
-    non_score_reward = -FLAGS.kl_coef * kl # (B, CL)
+    non_score_rewards = -FLAGS.kl_coef * kl # (B, CL)
     cont_last_token_index = jnp.argmax(cont_position_ids, axis=1) # (B)
-    rewards = non_score_reward.at[:, cont_last_token_index].add(scores) # (B, CL)
+    rewards = non_score_rewards.at[:, cont_last_token_index].add(score) # (B, CL)
     rewards = jax.lax.stop_gradient(rewards)
     timing['time/ppo/compute_rewards'] = time.time() - t
 
     # compute advantages
     t = time.time()
     advantages, returns = compute_advantages(cont_values, rewards, cont_attn_mask) # (B, CL), (B, CL)
+    advantages = jax.lax.stop_gradient(advantages)
+    returns = jax.lax.stop_gradient(returns)
     timing['time/ppo/compute_advantages'] = time.time() - t
 
     t = time.time()
@@ -331,19 +332,17 @@ def ppo_step(
         'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
         'objective/kl_coef': FLAGS.kl_coef,
         'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
-        'ppo/mean_non_score_reward': detach(masked_mean(non_score_reward, cont_attn_mask)),
-        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_reward, cont_attn_mask, axis=1))),
-        'ppo/mean_scores': detach(jnp.mean(scores)),
-        'ppo/score_total'
+        'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
+        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
+        'ppo/mean_scores': detach(jnp.mean(score)),
         'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
     })
     examples = {
         'prompt_input_ids': detach(prompt_input_ids),
         'cont_input_ids': detach(cont_input_ids),
         'reward': detach(reward),
-        # 'scores': detach(scores),
-        # 'non_score_reward': detach(non_score_reward),
-        # 'cont_last_token_index': detach(cont_last_token_index),
+        # 'score': detach(score),
+        # 'non_score_rewards': detach(non_score_rewards),
         # 'rewards': detach(rewards),
         # 'values': detach(cont_values),
         # 'returns': detach(returns),
@@ -612,9 +611,8 @@ def main(argv):
                         rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                         stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
-                    # print(f'scores: {examples["scores"][0]}')
-                    # print(f'non_score_reward: {examples["non_score_reward"][0]}')
-                    # print(f'cont_last_token_index: {examples["cont_last_token_index"][0]}')
+                    # print(f'score: {examples["score"][0]}')
+                    # print(f'non_score_rewards: {examples["non_score_rewards"][0]}')
                     # print(f'rewards: {examples["rewards"][0]}')
                     # print(f'values: {examples["values"][0]}')
                     # print(f'advantages: {examples["advantages"][0]}')

@@ -9,7 +9,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --train_dataset.type='hf_prompt' \
     --train_dataset.text_processor.fields='[instruction]' \
     --train_dataset.hf_prompt_dataset.seq_length=64 \
-    --max_continuation_len=16 \
+    --max_continuation_len=8 \
     --train_dataset.hf_prompt_dataset.batch_size=1 \
     --mini_batch_size=1 \
     --train_dataset.hf_prompt_dataset.num_workers=32 \
@@ -28,4 +28,4 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --ppo_epochs=1 \
     --save_model_freq=0 \
     --max_steps_per_epoch=1 \
-    --generate_only=True
+    --generate_only=False
