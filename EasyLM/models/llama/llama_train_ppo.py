@@ -335,6 +335,7 @@ def ppo_step(
         'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
         'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
         'ppo/mean_scores': detach(jnp.mean(score)),
+        'ppo/std_scores': detach(jnp.std(score)),
         'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
     })
     examples = {
