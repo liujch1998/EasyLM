@@ -337,6 +337,7 @@ def ppo_step(
         'ppo/mean_scores': detach(jnp.mean(score)),
         'ppo/std_scores': detach(jnp.std(score)),
         'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
+        'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
     })
     examples = {
         'prompt_input_ids': detach(prompt_input_ids),
