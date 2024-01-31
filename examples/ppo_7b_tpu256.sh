@@ -1,4 +1,5 @@
 gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --project=ai2-tpu --worker=all --command="cd n-tulu-ppo-jax; git pull; export WANDB_API_KEY='a46519994b4614615d5ce4aa8742ef19685a7cae'; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
+    --initialize_jax_distributed=True \
     --mesh_dim='1,32,8' \
     --load_llama_config_policy='7b' \
     --load_llama_config_reward='13b' \
@@ -20,10 +21,10 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v1.8_v1.7_EOStrick_t1-32-8_b32_mb32' \
+    --logger.prefix='train_v1.15_v1.14_ijd_t1-32-8_b32_mb32' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
-    --logger.output_dir='~/n-tulu-ppo-jax/runs/' \
+    --logger.output_dir='/home/jiachengl/n-tulu-ppo-jax/runs/' \
     --use_tpu=True \
     --ppo_epochs=1 \
     --lr=1e-6 \
@@ -32,4 +33,4 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-tpu-v3-256 --zone=us-east1-d --pr
     --save_model_freq=0 \
     --max_steps_per_epoch=0 \
     --generate_only=False \
-    &> ~/n-tulu-ppo-jax/all.log &"
+    &> /home/jiachengl/n-tulu-ppo-jax/all.log &"

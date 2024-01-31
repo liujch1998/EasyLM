@@ -20,16 +20,16 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v1.12_v1.10_rb-8.0_t1-64-8_b64_mb64' \
+    --logger.prefix='train_v1.16_v1.14_kl0.05_t1-64-8_b64_mb64' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
     --logger.output_dir='/home/jiachengl/n-tulu-ppo-jax/runs/' \
     --use_tpu=True \
-    --ppo_epochs=4 \
+    --ppo_epochs=1 \
     --lr=1e-6 \
-    --kl_coef=0.01 \
-    --reward_gain=1.0 --reward_bias=-8.0 \
-    --save_model_freq=50 \
+    --kl_coef=0.05 \
+    --reward_gain=1.0 --reward_bias=0.0 \
+    --save_model_freq=0 \
     --max_steps_per_epoch=0 \
     --generate_only=False \
-    &> ~/n-tulu-ppo-jax/all.log &"
+    &> /home/jiachengl/n-tulu-ppo-jax/all.log &"
