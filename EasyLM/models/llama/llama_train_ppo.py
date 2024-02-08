@@ -426,7 +426,7 @@ def main(argv):
     reward_model = FlaxLLaMAForCausalLM(llama_config_reward, dtype=get_float_dtype_by_name(FLAGS.dtype), _do_init=False)
 
     print("Building optimizer...")
-    FLAGS.optimizer.adamw_optimizer.init_lr = FLAGS.lr
+    FLAGS.optimizer.adamw_optimizer.init_lr = 0.0
     FLAGS.optimizer.adamw_optimizer.lr = FLAGS.lr
     FLAGS.optimizer.adamw_optimizer.end_lr = FLAGS.lr
     if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
