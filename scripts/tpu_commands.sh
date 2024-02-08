@@ -41,7 +41,7 @@ function _tpu_create {
 function _tpu_retry_create {
     while true; do
         _tpu_create "$@"
-        sleep 120s
+        sleep 60s
     done
 }
 
@@ -85,7 +85,7 @@ function _tpu_check {
     tpu_ips=$(_tpu_ips $tpu_zone $tpu_project $tpu_name)
     for host in $tpu_ips; do
         echo "============== Checking host: $host =============="
-        ssh $host 'tmux capture-pane -pt launch -S -2000'
+        ssh -o "StrictHostKeyChecking no" -o "UserKnownHostsFile /dev/null" $host 'tmux capture-pane -pt launch -S -2000'
         echo
         echo
     done

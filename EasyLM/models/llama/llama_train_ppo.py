@@ -626,7 +626,7 @@ def main(argv):
                 elif FLAGS.save_model_freq > 0 and (step + 1) % FLAGS.save_model_freq == 0:
                     save_checkpoint(policy_train_state, value_train_state, step=step)
             # save model at the end of each epoch
-            if FLAGS.save_model_freq > 0:
+            if FLAGS.save_model_freq > 0 or FLAGS.save_milestone_freq > 0:
                 save_checkpoint(policy_train_state, value_train_state, step=step, milestone=True)
 
 
