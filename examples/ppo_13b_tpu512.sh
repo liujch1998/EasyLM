@@ -1,8 +1,8 @@
 gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --project=ai2-tpu --worker=all --command="cd n-tulu-ppo-jax; git pull; export WANDB_API_KEY='a46519994b4614615d5ce4aa8742ef19685a7cae'; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
     --mesh_dim='1,64,8' \
-    --load_llama_config_policy='7b' \
+    --load_llama_config_policy='13b' \
     --load_llama_config_reward='13b' \
-    --load_checkpoint_policy='params::gs://hamishi-east1/easylm/llama2/tulu2_7b_fixed/263f4f758b194729b206d5adad2b50d7/streaming_params' \
+    --load_checkpoint_policy='params::gs://hamishi-east1/easylm/llama2/tulu2_13b_fixed/tulu2_13b_fixed/455af914503740be9664497dae996762/streaming_params' \
     --load_checkpoint_reward='params::gs://jiachengl-east1/ckpt/UltraRM-13b/streaming_params' \
     --tokenizer.vocab_file='gs://jiachengl-east1/tokenizer.model' \
     --tokenizer.add_bos_token=True \
@@ -20,8 +20,8 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v1.17_v1.16_warmup0.1_t1-64-8_b64_mb64' \
-    --logger.prefix_to_id=True \
+    --logger.prefix='train_v1.18_v1.17_13b_t1-64-8_b64_mb64' \
+    --logger.prefix_to_id=False \
     --logger.wandb_dir='wandb' \
     --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \
     --use_tpu=True \
@@ -29,7 +29,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --lr=1e-6 \
     --kl_coef=0.05 \
     --reward_gain=1.0 --reward_bias=0.0 \
-    --save_milestone_freq=100 \
+    --save_milestone_freq=0 \
     --num_epochs=1 \
     --max_steps_per_epoch=0 \
     --generate_only=False \

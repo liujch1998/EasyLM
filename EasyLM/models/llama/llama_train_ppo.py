@@ -336,7 +336,6 @@ def ppo_step(
         'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
         'ppo/mean_scores': detach(jnp.mean(score)),
         'ppo/std_scores': detach(jnp.std(score)),
-        'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
         'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
     })
     examples = {
@@ -595,14 +594,17 @@ def main(argv):
 
         sharded_rng = next_rng()
 
+        global_step = 0
         for epoch in trange(0, FLAGS.num_epochs, ncols=0, position=0):
             for step, batch in zip(trange(0, steps_per_epoch, ncols=0, position=1), dataset):
+                global_step += 1
                 policy_train_state, value_train_state, sharded_rng, stats, examples = sharded_train_step(
                     policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, batch
                 )
 
-                if FLAGS.log_freq > 0 and step % FLAGS.log_freq == 0:
+                if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
                     stats = {k: float(v) for k, v in stats.items()}
+                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step),
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     if FLAGS.generate_only:
@@ -621,13 +623,13 @@ def main(argv):
                     # print(f'returns: {examples["returns"][0]}')
                     # tqdm.write("\n" + pprint.pformat(stats) + "\n")
 
-                if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
-                    save_checkpoint(policy_train_state, value_train_state, step=step, milestone=True)
-                elif FLAGS.save_model_freq > 0 and (step + 1) % FLAGS.save_model_freq == 0:
-                    save_checkpoint(policy_train_state, value_train_state, step=step)
+                if FLAGS.save_milestone_freq > 0 and global_step % FLAGS.save_milestone_freq == 0:
+                    save_checkpoint(policy_train_state, value_train_state, step=global_step, milestone=True)
+                elif FLAGS.save_model_freq > 0 and global_step % FLAGS.save_model_freq == 0:
+                    save_checkpoint(policy_train_state, value_train_state, step=global_step)
             # save model at the end of each epoch
             if FLAGS.save_model_freq > 0 or FLAGS.save_milestone_freq > 0:
-                save_checkpoint(policy_train_state, value_train_state, step=step, milestone=True)
+                save_checkpoint(policy_train_state, value_train_state, step=global_step, milestone=True)
 
 
 if __name__ == "__main__":
