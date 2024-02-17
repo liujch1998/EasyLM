@@ -21,7 +21,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
     --logger.prefix='train_v1.18_v1.17_13b_t1-64-8_b64_mb64' \
-    --logger.prefix_to_id=False \
+    --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
     --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \
     --use_tpu=True \
@@ -29,7 +29,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --lr=1e-6 \
     --kl_coef=0.05 \
     --reward_gain=1.0 --reward_bias=0.0 \
-    --save_milestone_freq=0 \
+    --save_milestone_freq=100 \
     --num_epochs=1 \
     --max_steps_per_epoch=0 \
     --generate_only=False \

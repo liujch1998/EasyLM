@@ -336,6 +336,7 @@ def ppo_step(
         'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
         'ppo/mean_scores': detach(jnp.mean(score)),
         'ppo/std_scores': detach(jnp.std(score)),
+        'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
         'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
     })
     examples = {
@@ -604,7 +605,6 @@ def main(argv):
 
                 if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
                     stats = {k: float(v) for k, v in stats.items()}
-                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step),
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     if FLAGS.generate_only:
