@@ -4,7 +4,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-central1-f --proje
     --load_llama_config_reward='debug' \
     --load_checkpoint_policy='' \
     --load_checkpoint_reward='' \
-    --tokenizer.vocab_file='gs://jiachengl/tokenizer.model' \
+    --tokenizer.vocab_file='gs://jiachengl-east1/tokenizer.model' \
     --tokenizer.add_bos_token=True \
     --train_dataset.type='hf_prompt' \
     --train_dataset.text_processor.fields='[instruction]' \
@@ -15,7 +15,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-central1-f --proje
     --train_dataset.hf_prompt_dataset.num_workers=32 \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
-    --optimizer.adamw_optimizer.warmup_ratio=0.0 \
+    --optimizer.adamw_optimizer.warmup_ratio=0.1 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=False \
     --logger.entity='liujch1998' \
@@ -23,10 +23,14 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-central1-f --proje
     --logger.prefix='debug_tpu' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='wandb' \
-    --logger.output_dir='gs://jiachengl/n-tulu-ppo-jax/' \
+    --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \
     --use_tpu=True \
     --ppo_epochs=1 \
-    --save_model_freq=1 \
+    --lr=1e-6 \
+    --kl_coef=0.05 \
+    --reward_gain=1.0 --reward_bias=0.0 \
+    --save_milestone_freq=1 \
+    --num_epochs=1 \
     --max_steps_per_epoch=1 \
     --generate_only=False \
-    &> ~/n-tulu-ppo-jax/all.log &"
+    &> /home/jiachengl/n-tulu-ppo-jax/all.log &"
