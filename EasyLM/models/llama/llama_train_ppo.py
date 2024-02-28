@@ -77,7 +77,6 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     cliprange=0.2,
     cliprange_value=0.2,
     vf_coef=0.1,
-    max_grad_norm=1.0,
     # debugging flags
     max_steps_per_epoch=0,
     generate_only=False,
@@ -115,13 +114,13 @@ def whiten(x, mask, shift_mean=True):
 def detach(x):
     return jax.lax.stop_gradient(x)
 
-# Verify this implementation (this was written by ChatGPT) -- Cross-checked with optax impl, seems fine
-# This takes too long to compile! why?? -- Not significantly slower on debug model
-def clip_grad(grad, max_grad_norm):
-    norm = jnp.sqrt(sum([jnp.sum(jnp.square(g)) for g in jax.tree_util.tree_leaves(grad)]))
-    trigger = jnp.squeeze(norm < max_grad_norm)
-    clip_fn = lambda x: jax.lax.select(trigger, x, x * max_grad_norm / (norm + 1e-6))
-    return jax.tree_util.tree_map(clip_fn, grad)
+# # Verify this implementation (this was written by ChatGPT) -- Cross-checked with optax impl, seems fine
+# # This takes too long to compile! why?? -- Not significantly slower on debug model
+# def clip_grad(grad, max_grad_norm):
+#     norm = jnp.sqrt(sum([jnp.sum(jnp.square(g)) for g in jax.tree_util.tree_leaves(grad)]))
+#     trigger = jnp.squeeze(norm < max_grad_norm)
+#     clip_fn = lambda x: jax.lax.select(trigger, x, x * max_grad_norm / (norm + 1e-6))
+#     return jax.tree_util.tree_map(clip_fn, grad)
 
 
 def ppo_loss(
@@ -317,8 +316,8 @@ def ppo_step(
             )
             grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
             (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
-            policy_grads = clip_grad(policy_grads, max_grad_norm=FLAGS.max_grad_norm)
-            value_grads = clip_grad(value_grads, max_grad_norm=FLAGS.max_grad_norm)
+            # policy_grads = clip_grad(policy_grads, max_grad_norm=FLAGS.max_grad_norm)
+            # value_grads = clip_grad(value_grads, max_grad_norm=FLAGS.max_grad_norm)
             policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
             value_train_state = value_train_state.apply_gradients(grads=value_grads)
             all_stats.append(stats)
@@ -336,7 +335,6 @@ def ppo_step(
         'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
         'ppo/mean_scores': detach(jnp.mean(score)),
         'ppo/std_scores': detach(jnp.std(score)),
-        'ppo/learning_rate': FLAGS.optimizer.adamw_optimizer.lr,
         'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
     })
     examples = {
@@ -605,6 +603,7 @@ def main(argv):
 
                 if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
                     stats = {k: float(v) for k, v in stats.items()}
+                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step).item(),
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     if FLAGS.generate_only:
