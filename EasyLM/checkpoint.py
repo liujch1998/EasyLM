@@ -116,6 +116,9 @@ class StreamingCheckpointer(object):
                         continue
 
                 tensor = from_bytes(None, value)
+                if key[0] == 'score':
+                    key = tuple(['lm_head'] + list(key[1:]))
+                    tensor = jnp.repeat(tensor, 32000, axis=-1)
                 if shard_fns is not None:
                     tensor = shard_fns[key](tensor)
                 flattend_train_state[key] = tensor

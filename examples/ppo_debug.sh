@@ -4,7 +4,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --load_llama_config_reward='debug' \
     --load_checkpoint_policy='' \
     --load_checkpoint_reward='' \
-    --tokenizer.vocab_file='gs://hamishi-dev/easylm/llama/tokenizer.model' \
+    --tokenizer.vocab_file='gs://jiachengl-east1/tokenizer.model' \
     --tokenizer.add_bos_token=True \
     --train_dataset.type='hf_prompt' \
     --train_dataset.text_processor.fields='[instruction]' \
@@ -15,7 +15,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --train_dataset.hf_prompt_dataset.num_workers=32 \
     --optimizer.type='adamw' \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
-    --optimizer.adamw_optimizer.warmup_ratio=0.0 \
+    --optimizer.adamw_optimizer.warmup_ratio=0.1 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=False \
     --logger.entity='liujch1998' \
@@ -26,6 +26,10 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --logger.output_dir='/net/nfs.cirrascale/allennlp/jiachengl/n-tulu-ppo-jax/runs/' \
     --use_tpu=False \
     --ppo_epochs=1 \
-    --save_model_freq=0 \
+    --lr=1e-6 \
+    --kl_coef=0.05 \
+    --reward_gain=1.0 --reward_bias=0.0 \
+    --save_milestone_freq=1 \
+    --num_epochs=1 \
     --max_steps_per_epoch=1 \
     --generate_only=False
