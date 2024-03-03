@@ -603,7 +603,7 @@ def main(argv):
 
                 if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
                     stats = {k: float(v) for k, v in stats.items()}
-                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step).item(),
+                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step).item()
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     if FLAGS.generate_only:
