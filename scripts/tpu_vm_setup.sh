@@ -9,7 +9,8 @@ sudo apt-get update && sudo apt-get install -y \
     nodejs \
     bmon \
     p7zip-full \
-    nfs-common
+    nfs-common \
+    golang
 
 
 # Python dependencies
@@ -42,6 +43,7 @@ pydantic
 fastapi
 uvicorn
 gradio
+jax-smi
 EndOfFile
 
 pip install --upgrade -r $HOME/tpu_requirements.txt

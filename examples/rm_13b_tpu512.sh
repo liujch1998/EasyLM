@@ -1,0 +1,30 @@
+gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --project=ai2-tpu --worker=all --command="cd n-tulu-ppo-jax; git checkout main; git pull; export WANDB_API_KEY='a46519994b4614615d5ce4aa8742ef19685a7cae'; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_rm \
+    --mesh_dim='1,64,8' \
+    --dtype='bf16' \
+    --num_epochs=1 \
+    --log_freq=50 \
+    --save_model_freq=1000 \
+    --save_milestone_freq=0 \
+    --load_llama_config='13b' \
+    --update_llama_config='' \
+    --load_dataset_state='' \
+    --load_checkpoint='params::gs://hamishi-east1/easylm/llama2/13b' \
+    --tokenizer.vocab_file='gs://hamishi-east1/easylm/llama/tokenizer.model' \
+    --optimizer.type='adamw' \
+    --optimizer.adamw_optimizer.weight_decay=0.0 \
+    --optimizer.adamw_optimizer.lr=1e-5 \
+    --optimizer.adamw_optimizer.end_lr=1e-6 \
+    --optimizer.adamw_optimizer.warmup_ratio=0.03 \
+    --optimizer.accumulate_gradient_steps=8 \
+    --train_dataset.type='preference_json_torch' \
+    --train_dataset.json_torch_dataset.path='gs://hamishi-east1/easylm/data/converted_pref_data/ultrafeedback_rm_mix.jsonl' \
+    --train_dataset.json_torch_dataset.seq_length=4096 \
+    --train_dataset.json_torch_dataset.batch_size=64 \
+    --train_dataset.json_torch_dataset.num_workers=8 \
+    --checkpointer.save_optimizer_state=False \
+    --train_dataset.json_torch_dataset.remove_truncated_samples=True \
+    --logger.online=False \
+    --logger.project='n-Tulu-RM-Jax' \
+    --logger.entity='liujch1998' \
+    --logger.output_dir='gs://jiachengl-east1/n-tulu-rm-jax/ultrarm_13b_replication' \
+    &> /home/jiachengl/n-tulu-ppo-jax/all.log &"
