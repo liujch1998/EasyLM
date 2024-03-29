@@ -9,8 +9,8 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8b --zone=us-central1-f --proj
     --train_dataset.type='hf_prompt' \
     --train_dataset.text_processor.fields='[instruction]' \
     --train_dataset.hf_prompt_dataset.path='argilla/ultrafeedback-binarized-preferences' \
-    --train_dataset.hf_prompt_dataset.seq_length=64 \
-    --max_continuation_len=8 \
+    --train_dataset.hf_prompt_dataset.seq_length=1024 \
+    --max_continuation_len=1024 \
     --train_dataset.hf_prompt_dataset.batch_size=8 \
     --mini_batch_size=8 \
     --train_dataset.hf_prompt_dataset.num_workers=16 \
@@ -32,6 +32,6 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8b --zone=us-central1-f --proj
     --reward_gain=1.0 --reward_bias=0.0 \
     --save_milestone_freq=1 \
     --num_epochs=1 \
-    --max_steps_per_epoch=1 \
+    --max_steps_per_epoch=20 \
     --generate_only=False \
     &> /home/jiachengl/all.log &"
