@@ -1,4 +1,4 @@
-gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8b --zone=us-central1-f --project=ai2-tpu --worker=all --command="export WANDB_API_KEY=$WANDB_API_KEY; cd n-tulu-ppo-jax; git pull; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
+gcloud alpha compute tpus tpu-vm ssh jiachengl-v2-8 --zone=us-central1-f --project=ai2-tpu --worker=all --command="export WANDB_API_KEY=$WANDB_API_KEY; cd n-tulu-ppo-jax; git pull; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
     --mesh_dim='1,8,1' \
     --load_llama_config_policy='debug' \
     --load_llama_config_reward='debug' \

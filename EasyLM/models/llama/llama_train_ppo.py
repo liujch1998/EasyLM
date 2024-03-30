@@ -38,7 +38,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,
     initialize_jax_distributed=False,
     jax_distributed=JaxDistributedConfig.get_default_config(),
-    mesh_dim='1,-1,1',
+    mesh_dim='1,-1,1', # (dp, fsdp, mp). The dp dimension must be 1 for our code to work properly. dp x fsdp x mp must equal the number of devices.
     dtype='bf16',
     load_llama_config_policy='',
     load_llama_config_reward='',
@@ -60,7 +60,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     log_all_worker=False,
 
     max_continuation_len=16,
-    mini_batch_size=1,
+    mini_batch_size=1, # must be a multiple of dp x fsdp dimensions
     use_tpu=False,
     # relatively dynamic flags
     num_epochs=1,
@@ -182,7 +182,7 @@ def ppo_rollout(
     rng, batch,
 ):
     rng_generator = JaxRNG(rng)
-    batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
+    batch = with_sharding_constraint(batch, PS(('dp', 'fsdp'))) # dim 0 is sharded across dp and fsdp axes, dim 1 is not sharded
 
     pad_token_id = 0
     bos_token_id = 1
@@ -289,14 +289,14 @@ def ppo_step(
         assert cont_input_ids.shape[0] % FLAGS.mini_batch_size == 0
         for mb_start in range(0, cont_input_ids.shape[0], FLAGS.mini_batch_size):
             mb_end = mb_start + FLAGS.mini_batch_size
-            mb_input_ids = input_ids[mb_start:mb_end]
-            mb_attn_mask = attn_mask[mb_start:mb_end]
-            mb_cont_input_ids = cont_input_ids[mb_start:mb_end]
-            mb_cont_attn_mask = cont_attn_mask[mb_start:mb_end]
-            mb_cont_logps = cont_logps[mb_start:mb_end]
-            mb_cont_values = cont_values[mb_start:mb_end]
-            mb_advantages = advantages[mb_start:mb_end]
-            mb_returns = returns[mb_start:mb_end]
+            mb_input_ids = with_sharding_constraint(input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_attn_mask = with_sharding_constraint(attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_cont_input_ids = with_sharding_constraint(cont_input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_cont_attn_mask = with_sharding_constraint(cont_attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_cont_logps = with_sharding_constraint(cont_logps[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_cont_values = with_sharding_constraint(cont_values[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_advantages = with_sharding_constraint(advantages[mb_start:mb_end], PS(('dp', 'fsdp')))
+            mb_returns = with_sharding_constraint(returns[mb_start:mb_end], PS(('dp', 'fsdp')))
 
             loss_fn = lambda policy_params, value_params: ppo_loss(
                 policy_model, value_model,
@@ -580,10 +580,12 @@ def main(argv):
 
                 t = time.time()
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
+                batch.block_until_ready()
                 time_rollout = time.time() - t
                 policy_train_state, value_train_state, sharded_rng, stats, examples = sharded_ppo_step(
                     policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, batch
                 )
+                stats.block_until_ready()
                 time_total = time.time() - t
                 print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_total={time_total:.2f}")
 
