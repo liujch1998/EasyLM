@@ -15,6 +15,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --mini_batch_size=64 \
     --train_dataset.hf_prompt_dataset.num_workers=16 \
     --optimizer.type='adamw' \
+    --optimizer.accumulate_gradient_steps=1 \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.warmup_ratio=0.1 \
     --checkpointer.save_optimizer_state=False \

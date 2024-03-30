@@ -355,11 +355,16 @@ def main(argv):
     steps_per_epoch = len(wrapped_dataset) // real_batch_size
     steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
+    assert real_batch_size % (FLAGS.mini_batch_size * FLAGS.optimizer.gradient_accumulation_steps) == 0
+    grad_update_multiplier = real_batch_size // (FLAGS.mini_batch_size * FLAGS.optimizer.gradient_accumulation_steps) * FLAGS.ppo_epochs
+    grad_update_steps_per_epoch = steps_per_epoch * grad_update_multiplier
+    total_grad_update_steps = FLAGS.num_epochs * grad_update_steps_per_epoch
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
     print(f'real_batch_size={real_batch_size}')
     print(f'steps_per_epoch={steps_per_epoch}')
     print(f'total_steps={total_steps}')
+    print(f'total_grad_update_steps={total_grad_update_steps}')
 
     print("Building model...")
     if FLAGS.load_llama_config_policy != '':
@@ -398,7 +403,7 @@ def main(argv):
     FLAGS.optimizer.adamw_optimizer.lr = FLAGS.lr
     FLAGS.optimizer.adamw_optimizer.end_lr = FLAGS.lr
     if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
-        FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_steps)
+        FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_grad_update_steps)
     optimizer, optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
 
     print("Initializing training state and pjitting...")
@@ -580,12 +585,12 @@ def main(argv):
 
                 t = time.time()
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
-                batch.block_until_ready()
+                batch['input_ids'].block_until_ready()
                 time_rollout = time.time() - t
                 policy_train_state, value_train_state, sharded_rng, stats, examples = sharded_ppo_step(
                     policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, batch
                 )
-                stats.block_until_ready()
+                stats['tokens/responses_len_mean'].block_until_ready()
                 time_total = time.time() - t
                 print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_total={time_total:.2f}")
 
