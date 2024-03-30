@@ -355,8 +355,8 @@ def main(argv):
     steps_per_epoch = len(wrapped_dataset) // real_batch_size
     steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
-    assert real_batch_size % (FLAGS.mini_batch_size * FLAGS.optimizer.gradient_accumulation_steps) == 0
-    grad_update_multiplier = real_batch_size // (FLAGS.mini_batch_size * FLAGS.optimizer.gradient_accumulation_steps) * FLAGS.ppo_epochs
+    assert real_batch_size % (FLAGS.mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
+    grad_update_multiplier = real_batch_size // (FLAGS.mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
     grad_update_steps_per_epoch = steps_per_epoch * grad_update_multiplier
     total_grad_update_steps = FLAGS.num_epochs * grad_update_steps_per_epoch
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
