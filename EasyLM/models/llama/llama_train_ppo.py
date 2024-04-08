@@ -596,18 +596,11 @@ def main(argv):
 
                 if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
                     stats = {k: float(v) for k, v in stats.items()}
-                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step).item()
+                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step * grad_update_multiplier).item()
                     stats['time/ppo/rollout'] = time_rollout
                     stats['time/ppo/total'] = time_total
                     queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    # if FLAGS.generate_only:
-                    #     rows = [[q, r, str(cont_ids)] for q, r, cont_ids in zip(queries, responses, examples['cont_input_ids'])]
-                    #     stats['game_log'] = wandb.Table(columns=['query', 'response', 'cont_ids'], rows=rows)
-                    # else:
-                    #     rewards = examples['reward']
-                    #     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
-                    #     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     rewards = examples['reward']
                     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
