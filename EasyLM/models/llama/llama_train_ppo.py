@@ -36,7 +36,6 @@ except ImportError:
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,
-    initialize_jax_distributed=False,
     jax_distributed=JaxDistributedConfig.get_default_config(),
     mesh_dim='1,-1,1', # (dp, fsdp, mp). The dp dimension must be 1 for our code to work properly. dp x fsdp x mp must equal the number of devices.
     dtype='bf16',
@@ -658,8 +657,12 @@ def main(argv):
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
                 batch['cont_position_ids'].block_until_ready()
                 time_rollout = time.time() - t
+                jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
 
                 if FLAGS.generate_only:
+                    jax.debug.visualize_array_sharding(batch['prompt_input_ids'])
+                    print(batch['prompt_input_ids'].shape)
+                    print(batch['prompt_input_ids'])
                     stats = {
                         'time/ppo/rollout': time_rollout,
                     }
@@ -676,6 +679,7 @@ def main(argv):
                 )
                 batch['returns'].block_until_ready()
                 time_forward = time.time() - t
+                jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
 
                 t = time.time()
                 policy_train_state, value_train_state, sharded_rng, stats_backward = sharded_ppo_backward(
@@ -687,6 +691,7 @@ def main(argv):
                 jax.tree_map(lambda x: x.block_until_ready(), value_train_state.opt_state)
                 time_backward = time.time() - t
                 time_total = time.time() - t0
+                jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
 
                 print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_forward={time_forward:.2f}, time_backward={time_backward:.2f}, time_total={time_total:.2f}")
 
