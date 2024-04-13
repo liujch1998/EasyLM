@@ -1,5 +1,9 @@
-gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --project=ai2-tpu --worker=all --command="export WANDB_API_KEY=$WANDB_API_KEY; cd n-tulu-ppo-jax; git pull; export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
-    --mesh_dim='1,64,8' \
+gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-256 --zone=us-east1-d --project=ai2-tpu --worker=all --command="\
+export WANDB_API_KEY=$WANDB_API_KEY; \
+cd n-tulu-ppo-jax; \
+git pull; \
+export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE'; python3 -m EasyLM.models.llama.llama_train_ppo \
+    --mesh_dim='1,64,4' \
     --load_llama_config_policy='13b' \
     --load_llama_config_reward='13b' \
     --load_checkpoint_policy='params::gs://hamishi-east1/easylm/llama2/tulu2_13b_fixed/tulu2_13b_fixed/455af914503740be9664497dae996762/streaming_params' \
@@ -12,7 +16,8 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --train_dataset.hf_prompt_dataset.seq_length=1024 \
     --max_continuation_len=1024 \
     --train_dataset.hf_prompt_dataset.batch_size=64 \
-    --mini_batch_size=64 \
+    --forward_mini_batch_size=64 \
+    --backward_mini_batch_size=64 \
     --train_dataset.hf_prompt_dataset.num_workers=16 \
     --optimizer.type='adamw' \
     --optimizer.accumulate_gradient_steps=1 \
@@ -22,7 +27,7 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v2.2_v2.1_llama-13b-base-rm-uf-only' \
+    --logger.prefix='train_v2.4_v2.2_decouple-fwd-bwd_t256_m1x64x4_b64_mb64_g1' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='/home/jiachengl/wandb' \
     --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \
@@ -35,4 +40,5 @@ gcloud alpha compute tpus tpu-vm ssh jiachengl-v3-512 --zone=us-east1-d --projec
     --num_epochs=1 \
     --max_steps_per_epoch=0 \
     --generate_only=False \
-    &> /home/jiachengl/all.log &"
+    &> /home/jiachengl/all.log & \
+"

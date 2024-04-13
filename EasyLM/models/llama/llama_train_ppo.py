@@ -651,12 +651,24 @@ def main(argv):
         for epoch in trange(0, FLAGS.num_epochs, ncols=0, position=0):
             for step, batch in zip(trange(0, steps_per_epoch, ncols=0, position=1), dataset):
                 global_step += 1
+                jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
 
                 t0 = time.time()
                 t = time.time()
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
                 batch['cont_position_ids'].block_until_ready()
                 time_rollout = time.time() - t
+
+                if FLAGS.generate_only:
+                    stats = {
+                        'time/ppo/rollout': time_rollout,
+                    }
+                    queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    rows = [[q, r] for q, r in zip(queries, responses)]
+                    stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=rows)
+                    logger.log(stats)
+                    continue
 
                 t = time.time()
                 sharded_rng, batch, stats_forward = sharded_ppo_forward(
