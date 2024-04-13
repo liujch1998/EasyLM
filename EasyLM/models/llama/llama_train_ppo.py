@@ -60,7 +60,8 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     log_all_worker=False,
 
     max_continuation_len=16,
-    mini_batch_size=1, # must be a multiple of dp x fsdp dimensions
+    forward_mini_batch_size=1, # must be a divisor of batch_size and a multiple of dp x fsdp dimensions
+    backward_mini_batch_size=1, # must be a divisor of batch_size and a multiple of dp x fsdp dimensions
     use_tpu=False,
     # relatively dynamic flags
     num_epochs=1,
@@ -81,6 +82,10 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     max_steps_per_epoch=0,
     generate_only=False,
 )
+
+pad_token_id = 0
+bos_token_id = 1
+eos_token_id = 2
 
 
 def masked_sum(x, mask, axis=None):
@@ -184,10 +189,6 @@ def ppo_rollout(
     rng_generator = JaxRNG(rng)
     batch = with_sharding_constraint(batch, PS(('dp', 'fsdp'))) # dim 0 is sharded across dp and fsdp axes, dim 1 is not sharded
 
-    pad_token_id = 0
-    bos_token_id = 1
-    eos_token_id = 2
-
     prompt_input_ids, prompt_attn_mask = batch['prompt_input_ids'], batch['prompt_attn_mask']
     PL = prompt_input_ids.shape[1]
 
@@ -222,15 +223,15 @@ def ppo_rollout(
     cont_attn_mask = attn_mask[:, PL:] # (B, CL)
     cont_position_ids = position_ids[:, PL:] # (B, CL)
 
-    batch['input_ids'] = input_ids
-    batch['attn_mask'] = attn_mask
-    batch['cont_input_ids'] = cont_input_ids
-    batch['cont_attn_mask'] = cont_attn_mask
-    batch['cont_position_ids'] = cont_position_ids
+    batch['input_ids'] = detach(input_ids)
+    batch['attn_mask'] = detach(attn_mask)
+    batch['cont_input_ids'] = detach(cont_input_ids)
+    batch['cont_attn_mask'] = detach(cont_attn_mask)
+    batch['cont_position_ids'] = detach(cont_position_ids)
 
     return rng_generator(), batch
 
-def ppo_step(
+def ppo_forward(
     policy_train_state, reference_train_state, value_train_state, reward_train_state,
     policy_model, reference_model, value_model, reward_model,
     rng, batch,
@@ -238,57 +239,126 @@ def ppo_step(
     rng_generator = JaxRNG(rng)
     batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
 
-    eos_token_id = 2
-
-    prompt_input_ids, prompt_attn_mask = batch['prompt_input_ids'], batch['prompt_attn_mask']
-    reward_prompt_input_ids, reward_prompt_attn_mask = batch['reward_prompt_input_ids'], batch['reward_prompt_attn_mask']
     input_ids, attn_mask = batch['input_ids'], batch['attn_mask']
+    prompt_input_ids = batch['prompt_input_ids']
+    reward_prompt_input_ids, reward_prompt_attn_mask = batch['reward_prompt_input_ids'], batch['reward_prompt_attn_mask']
     cont_input_ids, cont_attn_mask, cont_position_ids = batch['cont_input_ids'], batch['cont_attn_mask'], batch['cont_position_ids']
     PL = prompt_input_ids.shape[1]
 
-    # run reward model
-    reward_input_ids = jnp.concatenate([reward_prompt_input_ids, cont_input_ids], axis=1) # (B, PL+CL)
-    reward_attn_mask = jnp.concatenate([reward_prompt_attn_mask, cont_attn_mask], axis=1) # (B, PL+CL)
-    reward = reward_model(reward_input_ids, reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits # (B)
-    # If the last token is not EOS, then we set the reward to -10
-    reward_position_ids = jnp.clip(jnp.cumsum(reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
-    reward_last_token_index = jnp.argmax(reward_position_ids, axis=1) # (B)
-    reward_last_token_id = jnp.take_along_axis(reward_input_ids, reward_last_token_index[:, None], axis=-1).squeeze(-1) # (B)
-    reward = jnp.where(reward_last_token_id == eos_token_id, reward, -10.0)
-    score = reward * FLAGS.reward_gain + FLAGS.reward_bias # (B)
-    score = jax.lax.stop_gradient(score)
+    assert input_ids.shape[0] % FLAGS.forward_mini_batch_size == 0
 
-    # run forward pass on policy
-    cont_logits = policy_model(input_ids, attn_mask, params=policy_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
-    cont_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
-    cont_logps = jax.lax.stop_gradient(cont_logps)
+    reward, score, cont_logps, cont_values, kl, non_score_rewards, rewards, advantages, returns = [], [], [], [], [], [], [], [], []
+    for mb_start in range(0, input_ids.shape[0], FLAGS.forward_mini_batch_size):
+        mb_end = mb_start + FLAGS.forward_mini_batch_size
+        mb_input_ids = with_sharding_constraint(input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
+        mb_attn_mask = with_sharding_constraint(attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
+        mb_cont_input_ids = with_sharding_constraint(cont_input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
+        mb_cont_attn_mask = with_sharding_constraint(cont_attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
+        mb_cont_position_ids = with_sharding_constraint(cont_position_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
+        mb_reward_prompt_input_ids = with_sharding_constraint(reward_prompt_input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
+        mb_reward_prompt_attn_mask = with_sharding_constraint(reward_prompt_attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
 
-    # run forward pass on reference
-    cont_ref_logits = reference_model(input_ids, attn_mask, params=reference_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
-    cont_ref_logps = jnp.take_along_axis(jax.nn.log_softmax(cont_ref_logits, axis=-1), cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
-    cont_ref_logps = jax.lax.stop_gradient(cont_ref_logps)
+        # run reward model
+        mb_reward_input_ids = jnp.concatenate([mb_reward_prompt_input_ids, mb_cont_input_ids], axis=1) # (B, PL+CL)
+        mb_reward_attn_mask = jnp.concatenate([mb_reward_prompt_attn_mask, mb_cont_attn_mask], axis=1) # (B, PL+CL)
+        mb_reward = reward_model(mb_reward_input_ids, mb_reward_attn_mask, params=reward_train_state.params['params'], dropout_rng=rng_generator()).logits # (B)
+        # If the last token is not EOS, then we set the reward to -10
+        mb_reward_position_ids = jnp.clip(jnp.cumsum(mb_reward_attn_mask, axis=1) - 1, 0, None) # (B, PL+CL)
+        mb_reward_last_token_index = jnp.argmax(mb_reward_position_ids, axis=1) # (B)
+        mb_reward_last_token_id = jnp.take_along_axis(mb_reward_input_ids, mb_reward_last_token_index[:, None], axis=-1).squeeze(-1) # (B)
+        mb_reward = jnp.where(mb_reward_last_token_id == eos_token_id, mb_reward, -10.0)
+        mb_reward = jax.lax.stop_gradient(mb_reward)
+        reward.append(mb_reward)
+        mb_score = mb_reward * FLAGS.reward_gain + FLAGS.reward_bias # (B)
+        mb_score = jax.lax.stop_gradient(mb_score)
+        score.append(mb_score)
 
-    # run forward pass on value
-    cont_values = value_model(input_ids, attn_mask, params=value_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1] # (B, CL)
-    cont_values = jax.lax.stop_gradient(cont_values)
+        # run forward pass on policy
+        mb_cont_logits = policy_model(mb_input_ids, mb_attn_mask, params=policy_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
+        mb_cont_logps = jnp.take_along_axis(jax.nn.log_softmax(mb_cont_logits, axis=-1), mb_cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
+        mb_cont_logps = jax.lax.stop_gradient(mb_cont_logps)
+        cont_logps.append(mb_cont_logps)
 
-    # penalize rewards
-    kl = cont_logps - cont_ref_logps # (B, CL)
-    non_score_rewards = -FLAGS.kl_coef * kl # (B, CL)
-    cont_last_token_index = jnp.argmax(cont_position_ids, axis=1) # (B)
-    rewards = non_score_rewards.at[jnp.arange(input_ids.shape[0]), cont_last_token_index].add(score) # (B, CL)
-    rewards = jax.lax.stop_gradient(rewards)
+        # run forward pass on reference
+        mb_cont_ref_logits = reference_model(mb_input_ids, mb_attn_mask, params=reference_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1, :] # (B, CL, V)
+        mb_cont_ref_logps = jnp.take_along_axis(jax.nn.log_softmax(mb_cont_ref_logits, axis=-1), mb_cont_input_ids[:, :, None], axis=-1).squeeze(-1) # (B, CL)
+        mb_cont_ref_logps = jax.lax.stop_gradient(mb_cont_ref_logps)
 
-    # compute advantages
-    advantages, returns = compute_advantages(cont_values, rewards, cont_attn_mask) # (B, CL), (B, CL)
-    advantages = jax.lax.stop_gradient(advantages)
-    returns = jax.lax.stop_gradient(returns)
+        # run forward pass on value
+        mb_cont_values = value_model(mb_input_ids, mb_attn_mask, params=value_train_state.params['params'], dropout_rng=rng_generator()).logits[:, PL-1:-1] # (B, CL)
+        mb_cont_values = jax.lax.stop_gradient(mb_cont_values)
+        cont_values.append(mb_cont_values)
+
+        # penalize rewards
+        mb_kl = mb_cont_logps - mb_cont_ref_logps # (B, CL)
+        mb_kl = jax.lax.stop_gradient(mb_kl)
+        kl.append(mb_kl)
+        mb_non_score_rewards = -FLAGS.kl_coef * mb_kl # (B, CL)
+        mb_non_score_rewards = jax.lax.stop_gradient(mb_non_score_rewards)
+        non_score_rewards.append(mb_non_score_rewards)
+        mb_cont_last_token_index = jnp.argmax(mb_cont_position_ids, axis=1) # (B)
+        mb_rewards = mb_non_score_rewards.at[jnp.arange(mb_input_ids.shape[0]), mb_cont_last_token_index].add(mb_score) # (B, CL)
+        mb_rewards = jax.lax.stop_gradient(mb_rewards)
+        rewards.append(mb_rewards)
+
+        # compute advantages
+        mb_advantages, mb_returns = compute_advantages(mb_cont_values, mb_rewards, mb_cont_attn_mask) # (B, CL), (B, CL)
+        mb_advantages = jax.lax.stop_gradient(mb_advantages)
+        mb_returns = jax.lax.stop_gradient(mb_returns)
+        advantages.append(mb_advantages)
+        returns.append(mb_returns)
+
+    reward = jnp.concatenate(reward, axis=0)
+    score = jnp.concatenate(score, axis=0)
+    cont_logps = jnp.concatenate(cont_logps, axis=0)
+    cont_values = jnp.concatenate(cont_values, axis=0)
+    kl = jnp.concatenate(kl, axis=0)
+    non_score_rewards = jnp.concatenate(non_score_rewards, axis=0)
+    rewards = jnp.concatenate(rewards, axis=0)
+    advantages = jnp.concatenate(advantages, axis=0)
+    returns = jnp.concatenate(returns, axis=0)
+
+    batch.update({
+        'reward': detach(reward),
+        'cont_logps': detach(cont_logps),
+        'cont_values': detach(cont_values),
+        'advantages': detach(advantages),
+        'returns': detach(returns),
+    })
+    stats = {
+        'env/reward_mean': detach(jnp.mean(reward)),
+        'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
+        'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
+        'objective/kl_coef': FLAGS.kl_coef,
+        'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
+        'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
+        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
+        'ppo/mean_scores': detach(jnp.mean(score)),
+        'ppo/std_scores': detach(jnp.std(score)),
+        'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
+    }
+
+    return rng_generator(), batch, stats
+
+def ppo_backward(
+    policy_train_state, value_train_state,
+    policy_model, value_model,
+    rng, batch,
+):
+    rng_generator = JaxRNG(rng)
+    batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
+
+    input_ids, attn_mask = batch['input_ids'], batch['attn_mask']
+    cont_input_ids, cont_attn_mask = batch['cont_input_ids'], batch['cont_attn_mask']
+    cont_logps, cont_values = batch['cont_logps'], batch['cont_values']
+    advantages, returns = batch['advantages'], batch['returns']
+
+    assert input_ids.shape[0] % FLAGS.backward_mini_batch_size == 0
 
     all_stats = []
     for ppo_epoch in range(FLAGS.ppo_epochs):
-        assert cont_input_ids.shape[0] % FLAGS.mini_batch_size == 0
-        for mb_start in range(0, cont_input_ids.shape[0], FLAGS.mini_batch_size):
-            mb_end = mb_start + FLAGS.mini_batch_size
+        for mb_start in range(0, input_ids.shape[0], FLAGS.backward_mini_batch_size):
+            mb_end = mb_start + FLAGS.backward_mini_batch_size
             mb_input_ids = with_sharding_constraint(input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
             mb_attn_mask = with_sharding_constraint(attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
             mb_cont_input_ids = with_sharding_constraint(cont_input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
@@ -310,26 +380,9 @@ def ppo_step(
             value_train_state = value_train_state.apply_gradients(grads=value_grads)
             all_stats.append(stats)
 
-    stats = {k: jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0) for k in all_stats[0].keys()}
-    stats.update({
-        'env/reward_mean': detach(jnp.mean(reward)),
-        'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
-        'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
-        'objective/kl_coef': FLAGS.kl_coef,
-        'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
-        'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
-        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
-        'ppo/mean_scores': detach(jnp.mean(score)),
-        'ppo/std_scores': detach(jnp.std(score)),
-        'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
-    })
-    examples = {
-        'prompt_input_ids': detach(prompt_input_ids),
-        'cont_input_ids': detach(cont_input_ids),
-        'reward': detach(reward),
-    }
+    stats = {k: detach(jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0)) for k in all_stats[0].keys()}
 
-    return policy_train_state, value_train_state, rng_generator(), stats, examples
+    return policy_train_state, value_train_state, rng_generator(), stats
 
 
 def main(argv):
@@ -355,8 +408,8 @@ def main(argv):
     steps_per_epoch = len(wrapped_dataset) // real_batch_size
     steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
-    assert real_batch_size % (FLAGS.mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
-    grad_update_multiplier = real_batch_size // (FLAGS.mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
+    assert real_batch_size % (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
+    grad_update_multiplier = real_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
     grad_update_steps_per_epoch = steps_per_epoch * grad_update_multiplier
     total_grad_update_steps = FLAGS.num_epochs * grad_update_steps_per_epoch
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
@@ -472,21 +525,37 @@ def main(argv):
         ppo_rollout_wrapper,
         in_shardings=(train_state_partition_policy, PS(), PS()),
         out_shardings=(PS(), PS()),
+        donate_argnums=(1),  # rng
     )
-    def ppo_step_wrapper(
+    def ppo_forward_wrapper(
         policy_train_state, reference_train_state, value_train_state, reward_train_state,
         rng, batch,
     ):
-        return ppo_step(
+        return ppo_forward(
             policy_train_state, reference_train_state, value_train_state, reward_train_state,
             policy_model, reference_model, value_model, reward_model,
             rng, batch,
         )
-    sharded_ppo_step = pjit(
-        ppo_step_wrapper,
+    sharded_ppo_forward = pjit(
+        ppo_forward_wrapper,
         in_shardings=(train_state_partition_policy, train_state_partition_policy, train_state_partition_reward, train_state_partition_reward, PS(), PS()),
-        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS()),
-        donate_argnums=(0, 2, 4),  # policy train state, value train state, and rng
+        out_shardings=(PS(), PS(), PS()),
+        donate_argnums=(4),  # rng
+    )
+    def ppo_backward_wrapper(
+        policy_train_state, value_train_state,
+        rng, batch,
+    ):
+        return ppo_backward(
+            policy_train_state, value_train_state,
+            policy_model, value_model,
+            rng, batch,
+        )
+    sharded_ppo_backward = pjit(
+        ppo_backward_wrapper,
+        in_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS()),
+        out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS()),
+        donate_argnums=(0, 1, 2),  # policy train state, value train state, and rng
     )
 
     checkpointer = StreamingCheckpointer(
@@ -583,25 +652,45 @@ def main(argv):
             for step, batch in zip(trange(0, steps_per_epoch, ncols=0, position=1), dataset):
                 global_step += 1
 
+                t0 = time.time()
                 t = time.time()
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
-                batch['input_ids'].block_until_ready()
+                batch['cont_position_ids'].block_until_ready()
                 time_rollout = time.time() - t
-                policy_train_state, value_train_state, sharded_rng, stats, examples = sharded_ppo_step(
+
+                t = time.time()
+                sharded_rng, batch, stats_forward = sharded_ppo_forward(
                     policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, batch
                 )
-                stats['tokens/responses_len_mean'].block_until_ready()
-                time_total = time.time() - t
-                print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_total={time_total:.2f}")
+                batch['returns'].block_until_ready()
+                time_forward = time.time() - t
+
+                t = time.time()
+                policy_train_state, value_train_state, sharded_rng, stats_backward = sharded_ppo_backward(
+                    policy_train_state, value_train_state, sharded_rng, batch
+                )
+                jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.params)
+                jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.opt_state)
+                jax.tree_map(lambda x: x.block_until_ready(), value_train_state.params)
+                jax.tree_map(lambda x: x.block_until_ready(), value_train_state.opt_state)
+                time_backward = time.time() - t
+                time_total = time.time() - t0
+
+                print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_forward={time_forward:.2f}, time_backward={time_backward:.2f}, time_total={time_total:.2f}")
 
                 if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
+                    stats = {**stats_forward, **stats_backward}
                     stats = {k: float(v) for k, v in stats.items()}
-                    stats['ppo/learning_rate'] = optimizer_info['learning_rate_schedule'](global_step * grad_update_multiplier).item()
-                    stats['time/ppo/rollout'] = time_rollout
-                    stats['time/ppo/total'] = time_total
-                    queries = tokenizer.batch_decode(examples['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    responses = tokenizer.batch_decode(examples['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    rewards = examples['reward']
+                    stats.update({
+                        'ppo/learning_rate': optimizer_info['learning_rate_schedule'](global_step * grad_update_multiplier).item(),
+                        'time/ppo/rollout': time_rollout,
+                        'time/ppo/forward': time_forward,
+                        'time/ppo/backward': time_backward,
+                        'time/ppo/total': time_total,
+                    })
+                    queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    rewards = batch['reward']
                     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
