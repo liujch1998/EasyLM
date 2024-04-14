@@ -611,6 +611,7 @@ def main(argv):
                 t = time.time()
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
                 batch['cont_position_ids'].block_until_ready()
+                batch = {k: jax.device_get(v) for k, v in batch.items()}
                 time_rollout = time.time() - t
                 jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
 
@@ -623,8 +624,8 @@ def main(argv):
                         'time/ppo/rollout': time_rollout,
                     }
                     # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
-                    queries = tokenizer.batch_decode(jax.device_get(batch['prompt_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    responses = tokenizer.batch_decode(jax.device_get(batch['cont_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     rows = [[q, r] for q, r in zip(queries, responses)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=rows)
                     logger.log(stats)
@@ -640,6 +641,7 @@ def main(argv):
                         policy_train_state, reference_train_state, value_train_state, reward_train_state, sharded_rng, mb_batch
                     )
                     mb_batch['returns'].block_until_ready()
+                    mb_batch = {k: jax.device_get(v) for k, v in mb_batch.items()}
                     all_mbs.append(mb_batch)
                     all_stats_forward.append(stats_forward)
                 batch = {k: jnp.concatenate([mb[k] for mb in all_mbs], axis=0) for k in all_mbs[0].keys()}
@@ -655,9 +657,9 @@ def main(argv):
                         'time/ppo/forward': time_forward,
                     })
                     # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
-                    queries = tokenizer.batch_decode(jax.device_get(batch['prompt_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    responses = tokenizer.batch_decode(jax.device_get(batch['cont_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    rewards = jax.device_get(batch['reward'])
+                    queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    rewards = batch['reward']
                     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
@@ -696,9 +698,9 @@ def main(argv):
                         'time/ppo/total': time_total,
                     })
                     # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
-                    queries = tokenizer.batch_decode(jax.device_get(batch['prompt_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    responses = tokenizer.batch_decode(jax.device_get(batch['cont_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    rewards = jax.device_get(batch['reward'])
+                    queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    rewards = batch['reward']
                     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
