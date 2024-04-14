@@ -353,34 +353,16 @@ def ppo_backward(
     cont_logps, cont_values = batch['cont_logps'], batch['cont_values']
     advantages, returns = batch['advantages'], batch['returns']
 
-    assert input_ids.shape[0] % FLAGS.backward_mini_batch_size == 0
-
-    all_stats = []
-    for ppo_epoch in range(FLAGS.ppo_epochs):
-        for mb_start in range(0, input_ids.shape[0], FLAGS.backward_mini_batch_size):
-            mb_end = mb_start + FLAGS.backward_mini_batch_size
-            mb_input_ids = with_sharding_constraint(input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_attn_mask = with_sharding_constraint(attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_cont_input_ids = with_sharding_constraint(cont_input_ids[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_cont_attn_mask = with_sharding_constraint(cont_attn_mask[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_cont_logps = with_sharding_constraint(cont_logps[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_cont_values = with_sharding_constraint(cont_values[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_advantages = with_sharding_constraint(advantages[mb_start:mb_end], PS(('dp', 'fsdp')))
-            mb_returns = with_sharding_constraint(returns[mb_start:mb_end], PS(('dp', 'fsdp')))
-
-            loss_fn = lambda policy_params, value_params: ppo_loss(
-                policy_model, value_model,
-                policy_params, value_params,
-                rng_generator(),
-                mb_input_ids, mb_attn_mask, mb_cont_input_ids, mb_cont_attn_mask, mb_cont_logps, mb_cont_values, mb_advantages, mb_returns,
-            )
-            grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
-            (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
-            policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
-            value_train_state = value_train_state.apply_gradients(grads=value_grads)
-            all_stats.append(stats)
-
-    stats = {k: detach(jnp.mean(jnp.stack([s[k] for s in all_stats], axis=0), axis=0)) for k in all_stats[0].keys()}
+    loss_fn = lambda policy_params, value_params: ppo_loss(
+        policy_model, value_model,
+        policy_params, value_params,
+        rng_generator(),
+        input_ids, attn_mask, cont_input_ids, cont_attn_mask, cont_logps, cont_values, advantages, returns,
+    )
+    grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
+    (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
+    policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
+    value_train_state = value_train_state.apply_gradients(grads=value_grads)
 
     return policy_train_state, value_train_state, rng_generator(), stats
 
@@ -701,13 +683,21 @@ def main(argv):
                     continue
 
                 t = time.time()
-                policy_train_state, value_train_state, sharded_rng, stats_backward = sharded_ppo_backward(
-                    policy_train_state, value_train_state, sharded_rng, batch
-                )
-                jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.params)
-                jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.opt_state)
-                jax.tree_map(lambda x: x.block_until_ready(), value_train_state.params)
-                jax.tree_map(lambda x: x.block_until_ready(), value_train_state.opt_state)
+                assert batch['input_ids'].shape[0] % FLAGS.backward_mini_batch_size == 0
+                all_stats_backward = []
+                for ppo_epoch in range(FLAGS.ppo_epochs):
+                    for mb_start in range(0, batch['input_ids'].shape[0], FLAGS.backward_mini_batch_size):
+                        mb_end = mb_start + FLAGS.backward_mini_batch_size
+                        mb_batch = {k: v[mb_start:mb_end] for k, v in batch.items()}
+                        policy_train_state, value_train_state, sharded_rng, stats_backward = sharded_ppo_backward(
+                            policy_train_state, value_train_state, sharded_rng, mb_batch
+                        )
+                        all_stats_backward.append(stats_backward)
+                        jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.params)
+                        jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.opt_state)
+                        jax.tree_map(lambda x: x.block_until_ready(), value_train_state.params)
+                        jax.tree_map(lambda x: x.block_until_ready(), value_train_state.opt_state)
+                stats_backward = {k: jnp.mean(jnp.stack([s[k] for s in all_stats_backward], axis=0), axis=0) for k in all_stats_backward[0].keys()}
                 time_backward = time.time() - t
                 time_total = time.time() - t0
                 jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
