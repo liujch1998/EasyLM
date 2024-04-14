@@ -661,13 +661,14 @@ def main(argv):
 
                 if FLAGS.generate_only:
                     jax.debug.visualize_array_sharding(batch['prompt_input_ids'])
+                    jax.debug.inspect_array_sharding(batch['prompt_input_ids'], callback=print)
                     print(batch['prompt_input_ids'].shape)
                     print(batch['prompt_input_ids'])
                     stats = {
                         'time/ppo/rollout': time_rollout,
                     }
-                    queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    queries = tokenizer.batch_decode(jax.device_get(batch['prompt_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    responses = tokenizer.batch_decode(jax.device_get(batch['cont_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     rows = [[q, r] for q, r in zip(queries, responses)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response'], rows=rows)
                     logger.log(stats)
