@@ -35,4 +35,5 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --save_milestone_freq=0 \
     --num_epochs=1 \
     --max_steps_per_epoch=0 \
-    --generate_only=False
+    --generate_only=False \
+    --no_backward=False

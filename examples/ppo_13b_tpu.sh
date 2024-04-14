@@ -27,7 +27,7 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v2.4_v2.2_decouple-fwd-bwd_t256_m1x64x4_b64_mb64_g1' \
+    --logger.prefix='train_v2.4.5_repro-v2' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='/home/jiachengl/wandb' \
     --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \
@@ -40,5 +40,6 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --num_epochs=1 \
     --max_steps_per_epoch=0 \
     --generate_only=False \
+    --no_backward=False \
     &> /home/jiachengl/all.log & \
 "

@@ -15,7 +15,7 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --train_dataset.hf_prompt_dataset.path='argilla/ultrafeedback-binarized-preferences' \
     --train_dataset.hf_prompt_dataset.seq_length=1024 \
     --max_continuation_len=1024 \
-    --train_dataset.hf_prompt_dataset.batch_size=8 \
+    --train_dataset.hf_prompt_dataset.batch_size=16 \
     --forward_mini_batch_size=8 \
     --backward_mini_batch_size=8 \
     --train_dataset.hf_prompt_dataset.num_workers=16 \
@@ -40,5 +40,6 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --num_epochs=1 \
     --max_steps_per_epoch=0 \
     --generate_only=False \
+    --no_backward=False \
     &> /home/jiachengl/all.log & \
 "

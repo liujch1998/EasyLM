@@ -363,15 +363,14 @@ def main(argv):
     steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
     assert real_batch_size % (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
-    grad_update_multiplier = real_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
-    grad_update_steps_per_epoch = steps_per_epoch * grad_update_multiplier
-    total_grad_update_steps = FLAGS.num_epochs * grad_update_steps_per_epoch
+    grad_updates_per_step = real_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
+    total_grad_updates = total_steps * grad_updates_per_step
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
     print(f'real_batch_size={real_batch_size}')
     print(f'steps_per_epoch={steps_per_epoch}')
     print(f'total_steps={total_steps}')
-    print(f'total_grad_update_steps={total_grad_update_steps}')
+    print(f'total_grad_updates={total_grad_updates}')
 
     print("Building model...")
     if FLAGS.load_llama_config_policy != '':
@@ -410,7 +409,8 @@ def main(argv):
     FLAGS.optimizer.adamw_optimizer.lr = FLAGS.lr
     FLAGS.optimizer.adamw_optimizer.end_lr = FLAGS.lr
     if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
-        FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_grad_update_steps)
+        FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_grad_updates)
+        # This is because the LR scheduler is a callable that should take in the actual number of gradient updates, not the number of times apply_gradients() is called
     optimizer, optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
 
     print("Initializing training state and pjitting...")
@@ -528,12 +528,14 @@ def main(argv):
             gather_fns=gather_fns_policy,
             metadata=metadata,
             milestone=milestone,
+            step=step,
         )
         checkpointer.save_all(
             train_state=value_train_state,
             gather_fns=gather_fns_reward,
             metadata=metadata,
             milestone=milestone,
+            step=step,
             is_value=True,
         )
 
@@ -692,7 +694,7 @@ def main(argv):
                     stats = {**stats_forward, **stats_backward}
                     stats = {k: float(v) for k, v in stats.items()}
                     stats.update({
-                        'ppo/learning_rate': optimizer_info['learning_rate_schedule'](global_step * grad_update_multiplier).item(),
+                        'ppo/learning_rate': optimizer_info['learning_rate_schedule'](global_step * grad_updates_per_step).item(),
                         'time/ppo/rollout': time_rollout,
                         'time/ppo/forward': time_forward,
                         'time/ppo/backward': time_backward,
