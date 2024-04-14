@@ -151,15 +151,15 @@ def ppo_loss(
     loss = pg_loss + FLAGS.vf_coef * vf_loss
 
     stats = {
-        # 'ppo/loss/policy': detach(pg_loss),
-        # 'ppo/loss/value': detach(vf_loss),
-        # 'ppo/loss/total': detach(loss),
-        # 'ppo/policy/ratios_mean': detach(masked_mean(ratio, cont_attn_mask)),
-        # 'ppo/policy/advantages_mean': detach(masked_mean(advantages, cont_attn_mask)),
-        # 'ppo/returns/mean': detach(masked_mean(returns, cont_attn_mask)),
-        # 'ppo/val/vpred': detach(masked_mean(new_cont_values, cont_attn_mask)),
-        # 'ppo/val/error': detach(masked_mean(jnp.square(new_cont_values - returns), cont_attn_mask)),
-        # 'ppo/val/mean': detach(masked_mean(old_cont_values, cont_attn_mask)),
+        'ppo/loss/policy': detach(pg_loss),
+        'ppo/loss/value': detach(vf_loss),
+        'ppo/loss/total': detach(loss),
+        'ppo/policy/ratios_mean': detach(masked_mean(ratio, cont_attn_mask)),
+        'ppo/policy/advantages_mean': detach(masked_mean(advantages, cont_attn_mask)),
+        'ppo/returns/mean': detach(masked_mean(returns, cont_attn_mask)),
+        'ppo/val/vpred': detach(masked_mean(new_cont_values, cont_attn_mask)),
+        'ppo/val/error': detach(masked_mean(jnp.square(new_cont_values - returns), cont_attn_mask)),
+        'ppo/val/mean': detach(masked_mean(old_cont_values, cont_attn_mask)),
     }
     return loss, stats
 
@@ -296,16 +296,16 @@ def ppo_forward(
         'returns': detach(returns),
     })
     stats = {
-        # 'env/reward_mean': detach(jnp.mean(reward)),
-        # 'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
-        # 'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
-        # 'objective/kl_coef': FLAGS.kl_coef,
-        # 'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
-        # 'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
-        # 'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
-        # 'ppo/mean_scores': detach(jnp.mean(score)),
-        # 'ppo/std_scores': detach(jnp.std(score)),
-        # 'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
+        'env/reward_mean': detach(jnp.mean(reward)),
+        'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
+        'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
+        'objective/kl_coef': FLAGS.kl_coef,
+        'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
+        'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
+        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
+        'ppo/mean_scores': detach(jnp.mean(score)),
+        'ppo/std_scores': detach(jnp.std(score)),
+        'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
     }
 
     batch = with_sharding_constraint(batch, PS())
@@ -611,6 +611,7 @@ def main(argv):
                 t = time.time()
                 sharded_rng, batch = sharded_ppo_rollout(policy_train_state, sharded_rng, batch)
                 batch['cont_position_ids'].block_until_ready()
+                # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
                 batch = {k: jax.device_get(v) for k, v in batch.items()}
                 time_rollout = time.time() - t
                 jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
@@ -623,7 +624,6 @@ def main(argv):
                     stats = {
                         'time/ppo/rollout': time_rollout,
                     }
-                    # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
                     queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     rows = [[q, r] for q, r in zip(queries, responses)]
@@ -642,6 +642,7 @@ def main(argv):
                     )
                     mb_batch['returns'].block_until_ready()
                     mb_batch = {k: jax.device_get(v) for k, v in mb_batch.items()}
+                    stats_forward = {k: jax.device_get(v) for k, v in stats_forward.items()}
                     all_mbs.append(mb_batch)
                     all_stats_forward.append(stats_forward)
                 batch = {k: jnp.concatenate([mb[k] for mb in all_mbs], axis=0) for k in all_mbs[0].keys()}
@@ -656,7 +657,6 @@ def main(argv):
                         'time/ppo/rollout': time_rollout,
                         'time/ppo/forward': time_forward,
                     })
-                    # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
                     queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     rewards = batch['reward']
@@ -679,6 +679,7 @@ def main(argv):
                         jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.opt_state)
                         jax.tree_map(lambda x: x.block_until_ready(), value_train_state.params)
                         jax.tree_map(lambda x: x.block_until_ready(), value_train_state.opt_state)
+                        stats_backward = {k: jax.device_get(v) for k, v in stats_backward.items()}
                         all_stats_backward.append(stats_backward)
                 stats_backward = {k: jnp.mean(jnp.stack([s[k] for s in all_stats_backward], axis=0), axis=0) for k in all_stats_backward[0].keys()}
                 time_backward = time.time() - t
@@ -697,7 +698,6 @@ def main(argv):
                         'time/ppo/backward': time_backward,
                         'time/ppo/total': time_total,
                     })
-                    # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
                     queries = tokenizer.batch_decode(batch['prompt_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(batch['cont_input_ids'], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     rewards = batch['reward']
