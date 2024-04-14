@@ -151,15 +151,15 @@ def ppo_loss(
     loss = pg_loss + FLAGS.vf_coef * vf_loss
 
     stats = {
-        'ppo/loss/policy': detach(pg_loss),
-        'ppo/loss/value': detach(vf_loss),
-        'ppo/loss/total': detach(loss),
-        'ppo/policy/ratios_mean': detach(masked_mean(ratio, cont_attn_mask)),
-        'ppo/policy/advantages_mean': detach(masked_mean(advantages, cont_attn_mask)),
-        'ppo/returns/mean': detach(masked_mean(returns, cont_attn_mask)),
-        'ppo/val/vpred': detach(masked_mean(new_cont_values, cont_attn_mask)),
-        'ppo/val/error': detach(masked_mean(jnp.square(new_cont_values - returns), cont_attn_mask)),
-        'ppo/val/mean': detach(masked_mean(old_cont_values, cont_attn_mask)),
+        # 'ppo/loss/policy': detach(pg_loss),
+        # 'ppo/loss/value': detach(vf_loss),
+        # 'ppo/loss/total': detach(loss),
+        # 'ppo/policy/ratios_mean': detach(masked_mean(ratio, cont_attn_mask)),
+        # 'ppo/policy/advantages_mean': detach(masked_mean(advantages, cont_attn_mask)),
+        # 'ppo/returns/mean': detach(masked_mean(returns, cont_attn_mask)),
+        # 'ppo/val/vpred': detach(masked_mean(new_cont_values, cont_attn_mask)),
+        # 'ppo/val/error': detach(masked_mean(jnp.square(new_cont_values - returns), cont_attn_mask)),
+        # 'ppo/val/mean': detach(masked_mean(old_cont_values, cont_attn_mask)),
     }
     return loss, stats
 
@@ -296,16 +296,16 @@ def ppo_forward(
         'returns': detach(returns),
     })
     stats = {
-        'env/reward_mean': detach(jnp.mean(reward)),
-        'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
-        'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
-        'objective/kl_coef': FLAGS.kl_coef,
-        'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
-        'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
-        'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
-        'ppo/mean_scores': detach(jnp.mean(score)),
-        'ppo/std_scores': detach(jnp.std(score)),
-        'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
+        # 'env/reward_mean': detach(jnp.mean(reward)),
+        # 'objective/kl': detach(jnp.mean(masked_sum(kl, cont_attn_mask, axis=1))),
+        # 'objective/kl_per_token': detach(masked_mean(kl, cont_attn_mask)),
+        # 'objective/kl_coef': FLAGS.kl_coef,
+        # 'ppo/mean_score_total': detach(jnp.mean(masked_sum(rewards, cont_attn_mask, axis=1))),
+        # 'ppo/mean_non_score_reward': detach(masked_mean(non_score_rewards, cont_attn_mask)),
+        # 'ppo/mean_non_score_reward_sum': detach(jnp.mean(masked_sum(non_score_rewards, cont_attn_mask, axis=1))),
+        # 'ppo/mean_scores': detach(jnp.mean(score)),
+        # 'ppo/std_scores': detach(jnp.std(score)),
+        # 'tokens/responses_len_mean': detach(jnp.mean(jnp.sum(cont_attn_mask, axis=1))),
     }
 
     batch = with_sharding_constraint(batch, PS())
