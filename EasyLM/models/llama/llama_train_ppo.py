@@ -694,7 +694,7 @@ def main(argv):
                     # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
                     queries = tokenizer.batch_decode(jax.device_get(batch['prompt_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(jax.device_get(batch['cont_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    rewards = batch['reward']
+                    rewards = jax.device_get(batch['reward'])
                     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
@@ -727,7 +727,7 @@ def main(argv):
                     # If we do not use jax.device_get() to convert into numpy array first, we will get an error when iterating a sharded array with dim >= 100
                     queries = tokenizer.batch_decode(jax.device_get(batch['prompt_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     responses = tokenizer.batch_decode(jax.device_get(batch['cont_input_ids']), skip_special_tokens=False, clean_up_tokenization_spaces=False)
-                    rewards = batch['reward']
+                    rewards = jax.device_get(batch['reward'])
                     rows = [[q, r, float(reward)] for q, r, reward in zip(queries, responses, rewards)]
                     stats['game_log'] = wandb.Table(columns=['query', 'response', 'reward'], rows=rows)
                     logger.log(stats)
