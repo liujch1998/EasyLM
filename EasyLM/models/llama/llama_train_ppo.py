@@ -424,7 +424,9 @@ def main(argv):
     if FLAGS.optimizer.adamw_optimizer.warmup_ratio > 0:
         FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_grad_updates)
         # This is because the LR scheduler is a callable that should take in the actual number of gradient updates, not the number of times apply_gradients() is called
-    optimizer, optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
+    value_optimizer, value_optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
+    FLAGS.optimizer.adamw_optimizer.lr_freeze_steps = policy_freeze_steps
+    policy_optimizer, policy_optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
 
     print("Initializing training state and pjitting...")
     def init_fn_policy(rng):
@@ -435,9 +437,9 @@ def main(argv):
             attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
             rngs=rng_generator(llama_config_policy.rng_keys()),
         )
-        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+        return TrainState.create(params=params, tx=policy_optimizer, apply_fn=None)
     def create_trainstate_from_params_policy(params):
-        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+        return TrainState.create(params=params, tx=policy_optimizer, apply_fn=None)
     train_state_shapes_policy = jax.eval_shape(init_fn_policy, next_rng()) # .params = {'params': {'transformer', 'lm_head'}} => .params = {'transformer', 'lm_head'}
     train_state_partition_policy = match_partition_rules(LLaMAConfig.get_partition_rules(), train_state_shapes_policy)
     shard_fns_policy, gather_fns_policy = make_shard_and_gather_fns(train_state_partition_policy, train_state_shapes_policy)
@@ -461,9 +463,9 @@ def main(argv):
             attention_mask=jnp.ones((4, seq_length), dtype=jnp.int32),
             rngs=rng_generator(llama_config_reward.rng_keys()),
         )
-        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+        return TrainState.create(params=params, tx=value_optimizer, apply_fn=None)
     def create_trainstate_from_params_reward(params):
-        return TrainState.create(params=params, tx=optimizer, apply_fn=None)
+        return TrainState.create(params=params, tx=value_optimizer, apply_fn=None)
     train_state_shapes_reward = jax.eval_shape(init_fn_reward, next_rng()) # .params = {'params': {'transformer', 'lm_head'}} => .params = {'transformer', 'lm_head'}
     train_state_partition_reward = match_partition_rules(LLaMAConfig.get_partition_rules(), train_state_shapes_reward)
     shard_fns_reward, gather_fns_reward = make_shard_and_gather_fns(train_state_partition_reward, train_state_shapes_reward)
@@ -711,7 +713,8 @@ def main(argv):
                     stats = {**stats_forward, **stats_backward}
                     stats = {k: float(v) for k, v in stats.items()}
                     stats.update({
-                        'ppo/learning_rate': optimizer_info['learning_rate_schedule'](global_step * grad_updates_per_step).item(),
+                        'ppo/learning_rate_policy': policy_optimizer_info['learning_rate_schedule'](global_step * grad_updates_per_step).item(),
+                        'ppo/learning_rate_value': value_optimizer_info['learning_rate_schedule'](global_step * grad_updates_per_step).item(),
                         'time/ppo/rollout': time_rollout,
                         'time/ppo/forward': time_forward,
                         'time/ppo/backward': time_backward,
