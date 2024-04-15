@@ -335,13 +335,13 @@ def ppo_backward(
     )
     grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
     (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
-    policy_train_state = jax.lax.cond(
-        freeze_policy,
-        lambda _: policy_train_state,
-        lambda _: policy_train_state.apply_gradients(grads=policy_grads),
-        None,
-    )
-    # policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
+    # policy_train_state = jax.lax.cond(
+    #     freeze_policy,
+    #     lambda _: policy_train_state,
+    #     lambda _: policy_train_state.apply_gradients(grads=policy_grads),
+    #     None,
+    # )
+    policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
     value_train_state = value_train_state.apply_gradients(grads=value_grads)
 
     return policy_train_state, value_train_state, rng_generator(), stats
