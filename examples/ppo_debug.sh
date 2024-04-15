@@ -12,6 +12,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --train_dataset.hf_prompt_dataset.seq_length=256 \
     --max_continuation_len=256 \
     --train_dataset.hf_prompt_dataset.batch_size=1 \
+    --rollouts_per_prompt=1 \
     --forward_mini_batch_size=1 \
     --backward_mini_batch_size=1 \
     --train_dataset.hf_prompt_dataset.num_workers=16 \

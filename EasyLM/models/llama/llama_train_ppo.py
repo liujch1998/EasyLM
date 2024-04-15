@@ -59,12 +59,13 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     log_all_worker=False,
 
     max_continuation_len=16,
-    forward_mini_batch_size=1, # must be a divisor of batch_size and a multiple of dp x fsdp dimensions
-    backward_mini_batch_size=1, # must be a divisor of batch_size and a multiple of dp x fsdp dimensions
+    forward_mini_batch_size=1, # must be a divisor of (batch_size x rollouts_per_prompt), and a multiple of (dp x fsdp) dimensions
+    backward_mini_batch_size=1, # must be a divisor of (batch_size x rollouts_per_prompt), and a multiple of (dp x fsdp) dimensions
     use_tpu=False,
     # relatively dynamic flags
     num_epochs=1,
     ppo_epochs=4,
+    rollouts_per_prompt=1,
     lr=1e-5,
     kl_coef=0.2,
     reward_gain=1.0,
@@ -358,18 +359,21 @@ def main(argv):
         dataset.load_state_dict(mlxu.load_pickle(FLAGS.load_dataset_state))
     wrapped_dataset = dataset.dataset if isinstance(dataset, torch.utils.data.DataLoader) else dataset
 
-    real_batch_size = wrapped_dataset.config.batch_size
-    steps_per_epoch = len(wrapped_dataset) // real_batch_size
+    prompt_batch_size = wrapped_dataset.config.batch_size
+    steps_per_epoch = len(wrapped_dataset) // prompt_batch_size
     steps_per_epoch = steps_per_epoch if FLAGS.max_steps_per_epoch == 0 else min(steps_per_epoch, FLAGS.max_steps_per_epoch)
     total_steps = FLAGS.num_epochs * steps_per_epoch
-    assert real_batch_size % (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
-    grad_updates_per_step = real_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
+    completion_batch_size = prompt_batch_size * FLAGS.rollouts_per_prompt
+    assert completion_batch_size % (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
+    grad_updates_per_step = completion_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
     total_grad_updates = total_steps * grad_updates_per_step
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
-    print(f'real_batch_size={real_batch_size}')
+    print(f'prompt_batch_size={prompt_batch_size}')
+    print(f'completion_batch_size={completion_batch_size}')
     print(f'steps_per_epoch={steps_per_epoch}')
     print(f'total_steps={total_steps}')
+    print(f'grad_updates_per_step={grad_updates_per_step}')
     print(f'total_grad_updates={total_grad_updates}')
 
     print("Building model...")
@@ -608,6 +612,9 @@ def main(argv):
             for step, batch in zip(trange(0, steps_per_epoch, ncols=0, position=1), dataset):
                 global_step += 1
                 jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
+
+                # Prepare batch for multi-rollout. The same prompts appear adjacently, so they end up in the same backward minibatch and there's some contrastive signal.
+                batch = {k: jnp.repeat(v, FLAGS.rollouts_per_prompt, axis=0) for k, v in batch.items()}
 
                 t0 = time.time()
                 t = time.time()
