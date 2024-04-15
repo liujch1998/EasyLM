@@ -20,6 +20,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --optimizer.accumulate_gradient_steps=1 \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.warmup_ratio=0.1 \
+    --policy_freeze_ratio=0.0001 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=False \
     --logger.entity='liujch1998' \

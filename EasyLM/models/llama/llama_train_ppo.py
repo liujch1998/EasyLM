@@ -66,6 +66,7 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     num_epochs=1,
     ppo_epochs=4,
     rollouts_per_prompt=1,
+    policy_freeze_ratio=0.0,
     lr=1e-5,
     kl_coef=0.2,
     reward_gain=1.0,
@@ -316,7 +317,7 @@ def ppo_forward(
 def ppo_backward(
     policy_train_state, value_train_state,
     policy_model, value_model,
-    rng, batch,
+    rng, batch, freeze_policy,
 ):
     rng_generator = JaxRNG(rng)
     batch = with_sharding_constraint(batch, PS(('dp', 'fsdp')))
@@ -334,7 +335,13 @@ def ppo_backward(
     )
     grad_fn = jax.value_and_grad(loss_fn, argnums=[0, 1], has_aux=True)
     (_, stats), (policy_grads, value_grads) = grad_fn(policy_train_state.params, value_train_state.params)
-    policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
+    policy_train_state = jax.lax.cond(
+        freeze_policy,
+        lambda _: policy_train_state,
+        lambda _: policy_train_state.apply_gradients(grads=policy_grads),
+        None,
+    )
+    # policy_train_state = policy_train_state.apply_gradients(grads=policy_grads)
     value_train_state = value_train_state.apply_gradients(grads=value_grads)
 
     return policy_train_state, value_train_state, rng_generator(), stats
@@ -367,6 +374,7 @@ def main(argv):
     assert completion_batch_size % (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) == 0
     grad_updates_per_step = completion_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
     total_grad_updates = total_steps * grad_updates_per_step
+    policy_freeze_steps = math.ceil(FLAGS.policy_freeze_ratio * total_steps)
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
     print(f'prompt_batch_size={prompt_batch_size}')
@@ -375,6 +383,7 @@ def main(argv):
     print(f'total_steps={total_steps}')
     print(f'grad_updates_per_step={grad_updates_per_step}')
     print(f'total_grad_updates={total_grad_updates}')
+    print(f'policy_freeze_steps={policy_freeze_steps}')
 
     print("Building model...")
     if FLAGS.load_llama_config_policy != '':
@@ -502,16 +511,16 @@ def main(argv):
     )
     def ppo_backward_wrapper(
         policy_train_state, value_train_state,
-        rng, batch,
+        rng, batch, freeze_policy,
     ):
         return ppo_backward(
             policy_train_state, value_train_state,
             policy_model, value_model,
-            rng, batch,
+            rng, batch, freeze_policy,
         )
     sharded_ppo_backward = pjit(
         ppo_backward_wrapper,
-        in_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS()),
+        in_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS(), PS()),
         out_shardings=(train_state_partition_policy, train_state_partition_reward, PS(), PS()),
         donate_argnums=(0, 1, 2),  # policy train state, value train state, and rng
     )
@@ -676,13 +685,14 @@ def main(argv):
 
                 t = time.time()
                 assert batch['input_ids'].shape[0] % FLAGS.backward_mini_batch_size == 0
+                freeze_policy = (global_step <= policy_freeze_steps)
                 all_stats_backward = []
                 for ppo_epoch in range(FLAGS.ppo_epochs):
                     for mb_start in range(0, batch['input_ids'].shape[0], FLAGS.backward_mini_batch_size):
                         mb_end = mb_start + FLAGS.backward_mini_batch_size
                         mb_batch = {k: v[mb_start:mb_end] for k, v in batch.items()}
                         policy_train_state, value_train_state, sharded_rng, stats_backward = sharded_ppo_backward(
-                            policy_train_state, value_train_state, sharded_rng, mb_batch
+                            policy_train_state, value_train_state, sharded_rng, mb_batch, freeze_policy,
                         )
                         jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.params)
                         jax.tree_map(lambda x: x.block_until_ready(), policy_train_state.opt_state)
@@ -695,7 +705,7 @@ def main(argv):
                 time_total = time.time() - t0
                 jax.profiler.save_device_memory_profile('/dev/shm/memory.prof')
 
-                print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_forward={time_forward:.2f}, time_backward={time_backward:.2f}, time_total={time_total:.2f}")
+                # print(f"step={global_step}, time_rollout={time_rollout:.2f}, time_forward={time_forward:.2f}, time_backward={time_backward:.2f}, time_total={time_total:.2f}")
 
                 if FLAGS.log_freq > 0 and global_step % FLAGS.log_freq == 0:
                     stats = {**stats_forward, **stats_backward}

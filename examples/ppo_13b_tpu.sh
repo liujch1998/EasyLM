@@ -15,7 +15,7 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --train_dataset.hf_prompt_dataset.path='argilla/ultrafeedback-binarized-preferences' \
     --train_dataset.hf_prompt_dataset.seq_length=1024 \
     --max_continuation_len=1024 \
-    --train_dataset.hf_prompt_dataset.batch_size=64 \
+    --train_dataset.hf_prompt_dataset.batch_size=512 \
     --rollouts_per_prompt=1 \
     --forward_mini_batch_size=64 \
     --backward_mini_batch_size=64 \
@@ -24,11 +24,12 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --optimizer.accumulate_gradient_steps=1 \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.warmup_ratio=0.1 \
+    --policy_freeze_ratio=0.1 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v2.4.5_repro-v2' \
+    --logger.prefix='train_v3_v2.4.4_policy-freeze=0.1' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='/home/jiachengl/wandb' \
     --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \

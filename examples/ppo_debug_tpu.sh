@@ -24,6 +24,7 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --optimizer.accumulate_gradient_steps=1 \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.warmup_ratio=0.1 \
+    --policy_freeze_ratio=0.001 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=False \
     --logger.entity='liujch1998' \
