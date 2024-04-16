@@ -375,6 +375,7 @@ def main(argv):
     grad_updates_per_step = completion_batch_size // (FLAGS.backward_mini_batch_size * FLAGS.optimizer.accumulate_gradient_steps) * FLAGS.ppo_epochs
     total_grad_updates = total_steps * grad_updates_per_step
     policy_freeze_steps = math.ceil(FLAGS.policy_freeze_ratio * total_steps)
+    policy_freeze_grad_updates = math.ceil(FLAGS.policy_freeze_ratio * total_grad_updates)
     seq_length = wrapped_dataset.seq_length + FLAGS.max_continuation_len
     print(f'len(wrapped_dataset)={len(wrapped_dataset)}')
     print(f'prompt_batch_size={prompt_batch_size}')
@@ -383,7 +384,7 @@ def main(argv):
     print(f'total_steps={total_steps}')
     print(f'grad_updates_per_step={grad_updates_per_step}')
     print(f'total_grad_updates={total_grad_updates}')
-    print(f'policy_freeze_steps={policy_freeze_steps}')
+    print(f'policy_freeze_grad_updates={policy_freeze_grad_updates}')
 
     print("Building model...")
     if FLAGS.load_llama_config_policy != '':
@@ -425,7 +426,7 @@ def main(argv):
         FLAGS.optimizer.adamw_optimizer.lr_warmup_steps = math.ceil(FLAGS.optimizer.adamw_optimizer.warmup_ratio * total_grad_updates)
         # This is because the LR scheduler is a callable that should take in the actual number of gradient updates, not the number of times apply_gradients() is called
     value_optimizer, value_optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
-    FLAGS.optimizer.adamw_optimizer.lr_freeze_steps = policy_freeze_steps
+    FLAGS.optimizer.adamw_optimizer.lr_freeze_steps = policy_freeze_grad_updates
     policy_optimizer, policy_optimizer_info = OptimizerFactory.get_optimizer(FLAGS.optimizer)
 
     print("Initializing training state and pjitting...")
