@@ -24,12 +24,12 @@ export LIBTPU_INIT_ARGS='--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla
     --optimizer.accumulate_gradient_steps=1 \
     --optimizer.adamw_optimizer.weight_decay=0.0 \
     --optimizer.adamw_optimizer.warmup_ratio=0.1 \
-    --policy_freeze_ratio=0.1 \
+    --policy_freeze_ratio=0.5 \
     --checkpointer.save_optimizer_state=False \
     --logger.online=True \
     --logger.entity='liujch1998' \
     --logger.project='n-Tulu-PPO-Jax' \
-    --logger.prefix='train_v3_v2.4.4_policy-freeze=0.1' \
+    --logger.prefix='train_v2.5.1_v2.5_policy-freeze0.5' \
     --logger.prefix_to_id=True \
     --logger.wandb_dir='/home/jiachengl/wandb' \
     --logger.output_dir='gs://jiachengl-east1/n-tulu-ppo-jax/' \
