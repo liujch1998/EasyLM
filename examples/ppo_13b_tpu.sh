@@ -7,7 +7,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --mesh_dim='1,64,4' \
     --load_llama_config_policy='13b' \
     --load_llama_config_reward='13b' \
-    --load_checkpoint_policy='params::gs://hamishi-east1/easylm/llama2/tulu2_13b_fixed/tulu2_13b_fixed/455af914503740be9664497dae996762/streaming_params' \
+    --load_checkpoint_policy='params::gs://hamishi-east1/easylm/llama2/tulu2_13b_fixed/tulu2_13b_fixed/455af914503740be9664497dae996762/streaming_params_20384' \
     --load_checkpoint_reward='params::gs://hamishi-east1/rm/tulu2_13b_ultrafeedback_rm/7371c411dcfd4b09994aaa50a3a07128/streaming_params_1903' \
     --tokenizer.vocab_file='gs://jiachengl-east1/tokenizer.model' \
     --tokenizer.add_bos_token=True \
@@ -37,6 +37,7 @@ python3 -m EasyLM.models.llama.llama_train_ppo \
     --ppo_epochs=1 \
     --lr=1e-6 \
     --kl_coef=0.05 \
+    --whiten_rewards=False \
     --reward_gain=1.0 --reward_bias=0.0 \
     --save_milestone_freq=10000 \
     --num_epochs=1 \

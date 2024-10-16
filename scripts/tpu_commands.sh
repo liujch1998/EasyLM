@@ -17,7 +17,7 @@ function _tpu_create {
     if [ "$tpu_gen" = "v3" ]; then
         software_version='tpu-vm-base'
     else
-        software_version='tpu-vm-v4-base'
+        software_version='tpu-vm-base'
     fi
 
     if [[ $tpu_cores =~ ^[0-9]+$ ]]; then
@@ -41,7 +41,46 @@ function _tpu_create {
 function _tpu_retry_create {
     while true; do
         _tpu_create "$@"
-        sleep 120s
+        sleep 60s
+    done
+}
+
+function _tpu_create_preemptible {
+    tpu_zone=$1
+    tpu_project=$2
+    tpu_gen=$3
+    tpu_cores=$4
+    tpu_name=$5
+    if [ "$tpu_gen" = "v3" ]; then
+        software_version='tpu-vm-base'
+    else
+        software_version='tpu-vm-v4-base'
+    fi
+
+    if [[ $tpu_cores =~ ^[0-9]+$ ]]; then
+        gcloud alpha compute tpus tpu-vm create \
+            $tpu_name \
+            --accelerator-type="$tpu_gen-$tpu_cores" \
+            --version $software_version \
+            --zone $tpu_zone \
+            --project $tpu_project \
+            --preemptible
+    else
+        gcloud alpha compute tpus tpu-vm create \
+            $tpu_name \
+            --type="$tpu_gen" \
+            --topology="$tpu_cores" \
+            --version $software_version \
+            --zone $tpu_zone \
+            --project $tpu_project \
+            --preemptible
+    fi
+}
+
+function _tpu_retry_create_preemptible {
+    while true; do
+        _tpu_create_preemptible "$@"
+        sleep 60s
     done
 }
 
@@ -51,8 +90,8 @@ function _tpu_cp_ssh_key {
     tpu_name=$3
 
     gcloud alpha compute tpus tpu-vm scp \
-        $HOME/.ssh/authorized_keys \
-        $tpu_name:/home/$USER/.ssh/ \
+        $HOME/.ssh/google_compute_engine.pub \
+        $tpu_name:/home/$USER/.ssh/authorized_keys \
         --worker=all \
         --project $tpu_project \
         --zone $tpu_zone
@@ -85,7 +124,7 @@ function _tpu_check {
     tpu_ips=$(_tpu_ips $tpu_zone $tpu_project $tpu_name)
     for host in $tpu_ips; do
         echo "============== Checking host: $host =============="
-        ssh $host 'tmux capture-pane -pt launch -S -2000'
+        ssh -o "StrictHostKeyChecking no" -o "UserKnownHostsFile /dev/null" $host 'tmux capture-pane -pt launch -S -2000'
         echo
         echo
     done
@@ -164,9 +203,21 @@ function _tpu_ssh {
 
     tpu_ips=$(_tpu_ips $tpu_zone $tpu_project $tpu_name)
     for host in $tpu_ips; do
-        ssh $host "$command" &
+        ssh -o "StrictHostKeyChecking no" -o "UserKnownHostsFile /dev/null" $host "$command" &
     done
     wait &> /dev/null
+}
+
+function _tpu_ssh_interactive {
+    tpu_zone=$1
+    tpu_project=$2
+    tpu_name=$3
+
+    gcloud alpha compute tpus tpu-vm ssh \
+        $tpu_name \
+        --worker=0 \
+        --project $tpu_project \
+        --zone $tpu_zone
 }
 
 function _tpu_reboot {
@@ -190,10 +241,14 @@ function tpu {
     export PROJECT_HOME='<your project home directory (parent of EasyLM)'
     export PROJECT_NAME='EasyLM'
     tpu_zone='<tpu zone>'
-    if [ "$1" = "<short name for your tpu project, you can define multiple ones>" ]; then
-        tpu_project='<full name for your tpu project>'
+    if [ "$1" = "tulu-ppo" ]; then
+        tpu_project='ai2-tpu'
         tpu_zone='us-east1-d'
         tpu_gen='v3'
+    elif [ "$1" = "tulu-ppo-debug" ]; then
+        tpu_project='ai2-tpu'
+        tpu_zone='us-central1-f'
+        tpu_gen='v2'
     else
         echo "Invalid syntax!"
         trap - SIGINT SIGTERM
@@ -214,10 +269,14 @@ function tpu {
             gcloud alpha compute tpus queued-resources delete $3 --project $tpu_project --zone $tpu_zone
     elif [ "$2" = "create" ]; then
         _tpu_create $tpu_zone $tpu_project $tpu_gen $3 $4
+    elif [ "$2" = "create_preemptible" ]; then
+        _tpu_create_preemptible $tpu_zone $tpu_project $tpu_gen $3 $4
     elif [ "$2" = "cp_ssh_key" ]; then
         _tpu_cp_ssh_key $tpu_zone $tpu_project $3
     elif [ "$2" = "retry_create" ]; then
         _tpu_retry_create $tpu_zone $tpu_project $tpu_gen $3 $4
+    elif [ "$2" = "retry_create_preemptible" ]; then
+        _tpu_retry_create_preemptible $tpu_zone $tpu_project $tpu_gen $3 $4
     elif [ "$2" = "cs" ]; then
         _tpu_create $tpu_zone $tpu_project $tpu_gen $3 $4
         sleep 90s
@@ -239,6 +298,8 @@ function tpu {
         _tpu_maintain $tpu_zone $tpu_project $3
     elif [ "$2" = "ssh" ]; then
         _tpu_ssh $tpu_zone $tpu_project $3 "$4"
+    elif [ "$2" = "ssh_interactive" ]; then
+        _tpu_ssh_interactive $tpu_zone $tpu_project $3
     elif [ "$2" = "reboot" ]; then
         _tpu_reboot $tpu_zone $tpu_project $3
     elif [ "$2" = "df" ]; then
